@@ -159,7 +159,7 @@ extension AppState {
 
     /// Guarda una copia de recuperación 2 s después del último cambio y la restaura al abrir.
     func configurePersistence(env: [String: String], demo: String?) {
-        let testing = demo != nil || env["WARPCAOS_FILE"] != nil || env["WARPCAOS_URL"] != nil
+        let testing = demo != nil || env["WARPCAOS_FILE"] != nil || env["WARPCAOS_URL"] != nil || env["WARPCAOS_PLAYLIST"] != nil
         if let path = env["WARPCAOS_PROJECT"] {
             load(from: URL(fileURLWithPath: path))
         } else if !testing, let data = try? Data(contentsOf: Self.autosaveURL) {

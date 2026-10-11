@@ -279,6 +279,8 @@ struct InspectorView: View {
                 Text(surface.source.displayName).lineLimit(1)
             }
 
+            PlaylistView(state: state, surface: surface)
+
             Picker("Forma", selection: Binding(get: { surface.shape }, set: { state.setShape($0) })) {
                 ForEach(ShapeKind.allCases) { Text($0.rawValue).tag($0) }
             }
@@ -328,6 +330,65 @@ struct InspectorView: View {
 
             Divider()
             MasksView(state: state, surface: surface)
+        }
+    }
+}
+
+/// Lista de reproducción de la superficie: varios contenidos que se suceden con fundido.
+struct PlaylistView: View {
+    @ObservedObject var state: AppState
+    let surface: SurfaceModel
+
+    var body: some View {
+        let items = surface.items
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(items.count > 1 ? "Lista de reproducción (\(items.count))" : "Lista de reproducción").font(.headline)
+                Spacer()
+                Menu {
+                    Button("Archivos…") { state.addItemFilesPanel() }
+                    Button("URL…") { state.openURLPanel(append: true) }
+                    Divider()
+                    ForEach(Pattern.allCases) { p in
+                        Button("Patrón: \(p.rawValue)") { state.addItemPatterns(p) }
+                    }
+                } label: { Image(systemName: "plus") }
+                    .menuStyle(.borderlessButton)
+                    .frame(width: 24)
+                    .help("Agregar contenido a la lista")
+            }
+
+            if items.count > 1 {
+                ForEach(Array(items.enumerated()), id: \.offset) { idx, src in
+                    HStack(spacing: 4) {
+                        Text("\(idx + 1)").font(.caption2).foregroundStyle(.secondary).frame(width: 16)
+                        Text(src.displayName).font(.caption).lineLimit(1)
+                        Spacer()
+                        Button { state.moveItem(at: idx, by: -1) } label: { Image(systemName: "chevron.up") }
+                            .disabled(idx == 0)
+                        Button { state.moveItem(at: idx, by: 1) } label: { Image(systemName: "chevron.down") }
+                            .disabled(idx == items.count - 1)
+                        Button { state.removeItem(at: idx) } label: { Image(systemName: "xmark") }
+                    }
+                    .buttonStyle(.borderless)
+                }
+
+                Stepper("Repetir cada loop \(surface.playlistLoops) \(surface.playlistLoops == 1 ? "vez" : "veces")",
+                        value: Binding(get: { surface.playlistLoops }, set: { state.setPlaylistLoops($0) }), in: 1...99)
+                HStack {
+                    Text("Fundido")
+                    Slider(value: Binding(get: { Double(surface.playlistFade) }, set: { state.setPlaylistFade(Float($0)) }), in: 0...3)
+                    Text(surface.playlistFade < 0.05 ? "corte" : String(format: "%.1f s", surface.playlistFade))
+                        .monospacedDigit().frame(width: 44, alignment: .trailing)
+                }
+                Toggle("Aleatorio", isOn: Binding(get: { surface.playlistShuffle }, set: { state.setPlaylistShuffle($0) }))
+                Stepper("Imágenes y patrones: \(Int(surface.playlistStillSeconds)) s",
+                        value: Binding(get: { Int(surface.playlistStillSeconds) }, set: { state.setPlaylistStillSeconds($0) }), in: 1...600)
+            } else {
+                Text("Con un solo contenido se repite sin fin. Agregá más con «+» para armar una lista con fundido.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

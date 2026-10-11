@@ -35,6 +35,10 @@ enum Shaders {
         float2 uvM1;
         float2 shM0;         // matriz 2x2 de la forma (rotación y volteo)
         float2 shM1;
+        float2 uv2M0;        // matriz del segundo contenido (durante un fundido entre contenidos de la lista)
+        float2 uv2M1;
+        float mixAmount;     // 0 = solo el contenido 1; 1 = solo el contenido 2
+        float pad;
     };
 
     struct MaskInfo {
@@ -106,18 +110,28 @@ enum Shaders {
         }
     }
 
+    // Muestrea un contenido aplicando su matriz UV; fuera de la textura (rotada o escalada) queda transparente.
+    float4 sampleContent(texture2d<float> tex, sampler smp, float2 uv, float2 m0, float2 m1) {
+        float2 t = float2x2(m0, m1) * (uv - 0.5) + 0.5;
+        float4 c = tex.sample(smp, t);
+        float2 fw = fwidth(t) + 1e-6;
+        float2 edge = smoothstep(-0.5 * fw, 0.5 * fw, t) * smoothstep(-0.5 * fw, 0.5 * fw, 1.0 - t);
+        c.a *= edge.x * edge.y;
+        return c;
+    }
+
     fragment float4 fragment_main(VertexOut in [[stage_in]],
                                   texture2d<float> tex [[texture(0)]],
+                                  texture2d<float> tex2 [[texture(1)]],
                                   sampler smp [[sampler(0)]],
                                   constant FragUniform &u [[buffer(0)]],
                                   constant float2 *maskPts [[buffer(1)]],
                                   constant MaskInfo *masks [[buffer(2)]]) {
-        float2 t = float2x2(u.uvM0, u.uvM1) * (in.uv - 0.5) + 0.5;
-        float4 c = tex.sample(smp, t);
-        // Fuera de la textura (rotada o escalada) no hay contenido.
-        float2 fw = fwidth(t) + 1e-6;
-        float2 edge = smoothstep(-0.5 * fw, 0.5 * fw, t) * smoothstep(-0.5 * fw, 0.5 * fw, 1.0 - t);
-        c.a *= edge.x * edge.y;
+        float4 c = sampleContent(tex, smp, in.uv, u.uvM0, u.uvM1);
+        if (u.mixAmount > 0.0) {   // uniforme por dibujo: el control de flujo es uniforme
+            float4 c2 = sampleContent(tex2, smp, in.uv, u.uv2M0, u.uv2M1);
+            c = mix(c, c2, u.mixAmount);
+        }
 
         // Forma: recorte en UV, antes de las máscaras de pantalla.
         float shapeA = 1.0;

@@ -1,4 +1,5 @@
 import MetalKit
+import QuartzCore
 
 /// Debe coincidir con `FragUniform` y `MaskInfo` del shader.
 private struct FragUniform {
@@ -12,6 +13,10 @@ private struct FragUniform {
     var uvM1: SIMD2<Float>
     var shM0: SIMD2<Float>
     var shM1: SIMD2<Float>
+    var uv2M0: SIMD2<Float>
+    var uv2M1: SIMD2<Float>
+    var mixAmount: Float
+    var pad: Float
 }
 
 private struct MaskInfo {
@@ -21,16 +26,46 @@ private struct MaskInfo {
     var flags: UInt32
 }
 
-/// Recursos de GPU/medios de una superficie.
-private final class Resources {
-    var source: Source?
+/// Un contenido cargado (patrón, imagen o video) listo para dibujarse. Cada elemento de la lista de una superficie tiene el suyo.
+private final class MediaSlot {
+    let source: Source
     var texture: MTLTexture?
     var video: VideoSource?
+    var aspect: Float = 1
+    var isVideo = false
+    /// Ya hay imagen para mostrar (textura lista o primer frame recibido).
     var sizeReported = false
-    var failureReported = false
+    var failure: String?
     var readyAt: Date?
     var retries = 0
     var wasPlaying = true
+    /// Se está precargando en silencio para el próximo fundido.
+    var preload = false
+    /// Instante (CACurrentMediaTime) desde el que cuenta su duración, para imágenes y patrones.
+    var startedAt: Double = 0
+    /// Invalida respuestas asíncronas (descarga, yt-dlp) de una carga anterior.
+    var loadToken = 0
+
+    init(source: Source) { self.source = source }
+}
+
+/// Recursos de GPU y de reproducción de una superficie.
+private final class Resources {
+    // Lista de reproducción: contenido actual, siguiente (precargado) y progreso del fundido.
+    var cur: MediaSlot?
+    var next: MediaSlot?
+    var itemsKey: [Source] = []
+    var order: [Int] = []
+    var pendingOrder: [Int]?
+    var pos = 0
+    var fadeStart: Double?
+    var mix: Float = 0
+    var reported = false
+    var failureReported = false
+    var consecutiveFailures = 0
+    var lastTick = CACurrentMediaTime()
+
+    // Malla.
     var revision = -1
     var vertexBuffer: MTLBuffer?
     var indexBuffer: MTLBuffer?
@@ -117,7 +152,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         for s in state.surfaces {
             let r = resources[s.id] ?? Resources()
             resources[s.id] = r
-            syncSource(r, s)
+            syncSurface(r, s)
         }
         let alive = Set(state.surfaces.map(\.id))
         for k in resources.keys where !alive.contains(k) { resources[k] = nil }
@@ -189,7 +224,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let origin = SIMD2<Float>(Float(px.minX), Float(px.minY))
         let pixelScale = Float(scale)
         for s in surfaces where s.visible {
-            guard let r = resources[s.id], let tex = r.texture,
+            guard let r = resources[s.id], let tex = r.cur?.texture,
                   let vb = r.vertexBuffer, let ib = r.indexBuffer else { continue }
 
             // Máscaras: hasta 8 y 400 vértices por superficie (límite de 4 KB de setFragmentBytes).
@@ -203,13 +238,22 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
             let maskCount = infos.count
             if infos.isEmpty { pts = [.zero]; infos = [MaskInfo(start: 0, count: 0, feather: 0, flags: 0)] }
-            let cm = s.contentMatrix, sm = s.shapeMatrix
+            let cm = s.contentMatrix(aspect: r.cur?.aspect ?? s.contentAspect), sm = s.shapeMatrix
+            // Durante un fundido de la lista se mezcla con el contenido siguiente.
+            var cm2 = (SIMD2<Float>(0, 0), SIMD2<Float>(0, 0)), mixAmount: Float = 0, tex2 = tex
+            if r.mix > 0, let nx = r.next, let t2 = nx.texture {
+                cm2 = s.contentMatrix(aspect: nx.aspect)
+                mixAmount = r.mix
+                tex2 = t2
+            }
             var u = FragUniform(viewport: viewport, origin: origin, opacity: s.opacity, maskCount: UInt32(maskCount),
                                 shape: s.shape.shaderID, shapeFeather: s.shapeFeather,
-                                uvM0: cm.0, uvM1: cm.1, shM0: sm.0, shM1: sm.1)
+                                uvM0: cm.0, uvM1: cm.1, shM0: sm.0, shM1: sm.1,
+                                uv2M0: cm2.0, uv2M1: cm2.1, mixAmount: mixAmount, pad: 0)
 
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.setFragmentTexture(tex, index: 0)
+            enc.setFragmentTexture(tex2, index: 1)
             enc.setFragmentBytes(&u, length: MemoryLayout<FragUniform>.stride, index: 0)
             enc.setFragmentBytes(pts, length: pts.count * MemoryLayout<SIMD2<Float>>.stride, index: 1)
             enc.setFragmentBytes(infos, length: infos.count * MemoryLayout<MaskInfo>.stride, index: 2)
@@ -227,149 +271,331 @@ final class Renderer: NSObject, MTKViewDelegate {
         cmd.commit()
     }
 
-    // MARK: Fuente de contenido
+    // MARK: Lista de reproducción y contenido
 
-    private func syncSource(_ r: Resources, _ s: SurfaceModel) {
-        if r.source != s.source { loadSource(r, s) }
-        guard let video = r.video else { return }
+    private static let log = ProcessInfo.processInfo.environment["WARPCAOS_LOG"] != nil
+    private let t0 = CACurrentMediaTime()
+    private func logEvent(_ s: @autoclosure () -> String) {
+        if Renderer.log { print(String(format: "[%7.2f] ", CACurrentMediaTime() - t0) + s()); fflush(stdout) }
+    }
 
-        if let msg = video.errorMessage, !r.failureReported {
-            // Las URL de stream de una página vencen: se vuelve a resolver (hasta 3 veces seguidas) antes de rendirse.
-            if case .page = s.source, r.retries < 3 {
-                r.retries += 1
-                loadSource(r, s)
+    private static let imageOptions: [MTKTextureLoader.Option: Any] = [
+        .SRGB: false,
+        .origin: MTKTextureLoader.Origin.topLeft,
+        .generateMipmaps: true,
+    ]
+
+    private func makeOrder(_ n: Int, shuffle: Bool, avoidFirst: Int?) -> [Int] {
+        var o = Array(0..<n)
+        if shuffle {
+            o.shuffle()
+            if let a = avoidFirst, n > 1, o.first == a { o.swapAt(0, 1) }   // no repetir el último contenido seguido
+        }
+        return o
+    }
+
+    private func resetPlaylist(_ r: Resources, _ s: SurfaceModel, _ items: [Source]) {
+        r.cur?.video?.player.pause()
+        r.itemsKey = items
+        r.order = makeOrder(items.count, shuffle: s.playlistShuffle, avoidFirst: nil)
+        r.pendingOrder = nil
+        r.pos = 0
+        r.next = nil
+        r.fadeStart = nil
+        r.mix = 0
+        r.reported = false
+        r.failureReported = false
+        r.consecutiveFailures = 0
+        let slot = MediaSlot(source: items[r.order[0]])
+        r.cur = slot
+        logEvent("lista: \(items.count) contenido(s), empieza «\(slot.source.displayName)»")
+        loadSlot(slot, s)
+    }
+
+    /// Índice (en `items`) del contenido que sigue al actual.
+    private func nextIndex(_ r: Resources, _ s: SurfaceModel) -> Int {
+        if r.pos + 1 < r.order.count { return r.order[r.pos + 1] }
+        if r.pendingOrder == nil {
+            r.pendingOrder = makeOrder(r.order.count, shuffle: s.playlistShuffle, avoidFirst: r.order.last)
+        }
+        return r.pendingOrder![0]
+    }
+
+    private func advanceOrder(_ r: Resources) {
+        if r.pos + 1 < r.order.count { r.pos += 1 } else {
+            r.order = r.pendingOrder ?? r.order
+            r.pendingOrder = nil
+            r.pos = 0
+        }
+    }
+
+    /// Segundos que le quedan al contenido actual (nil si todavía no empezó a mostrarse).
+    private func timeLeft(_ slot: MediaSlot, _ s: SurfaceModel, _ now: Double) -> Double? {
+        guard slot.sizeReported else { return nil }
+        if let v = slot.video, let d = v.durationSeconds {
+            let total = Double(max(1, s.playlistLoops)) * d
+            return total - (Double(v.loopCount) * d + v.currentSeconds)
+        }
+        return Double(s.playlistStillSeconds) - (now - slot.startedAt)
+    }
+
+    private func syncSurface(_ r: Resources, _ s: SurfaceModel) {
+        let now = CACurrentMediaTime()
+        let dt = min(max(now - r.lastTick, 0), 0.5)
+        r.lastTick = now
+
+        let items = s.items
+        if r.itemsKey != items { resetPlaylist(r, s, items) }
+        guard let cur = r.cur else { return }
+
+        syncSlot(cur, s)
+        if let nx = r.next { syncSlot(nx, s) }
+
+        // Reproducción: pausa y silencio de la superficie (el siguiente se mantiene en silencio hasta su fundido).
+        if let v = cur.video {
+            if s.playing != cur.wasPlaying {
+                cur.wasPlaying = s.playing
+                s.playing ? v.player.play() : v.player.pause()
+            }
+            if v.player.isMuted != s.muted { v.player.isMuted = s.muted }
+        }
+        if !s.playing { cur.startedAt += dt }   // el reloj de imágenes y patrones se detiene con la pausa
+
+        // Primer frame del contenido actual: informa proporción y tipo, y apaga el cartel «Cargando…».
+        if cur.sizeReported, !r.reported {
+            r.reported = true
+            cur.startedAt = now
+            state.contentLoaded(id: s.id, aspect: cur.aspect, isVideo: cur.isVideo)
+            state.finishedLoading()
+        }
+
+        guard items.count > 1 else {
+            // Un solo contenido: se repite sin fin; si falla, se vuelve al tablero.
+            if let f = cur.failure, !r.failureReported {
+                r.failureReported = true
+                state.contentFailed(id: s.id, message: f)
+            }
+            return
+        }
+        advancePlaylist(r, s, cur, now)
+    }
+
+    private func advancePlaylist(_ r: Resources, _ s: SurfaceModel, _ cur: MediaSlot, _ now: Double) {
+        let n = r.itemsKey.count
+        let curFailed = cur.failure != nil
+        let fade = curFailed ? 0 : Double(min(max(s.playlistFade, 0), 3))
+        let left: Double? = curFailed ? 0 : timeLeft(cur, s, now)
+
+        if curFailed, !r.failureReported {
+            r.consecutiveFailures += 1
+            state.status = "Se salteó «\(cur.source.displayName)»: \(cur.failure ?? "")"
+            if r.consecutiveFailures >= n {
+                r.failureReported = true
+                state.contentFailed(id: s.id, message: cur.failure ?? "No se pudo reproducir ningún contenido de la lista")
                 return
             }
-            r.failureReported = true
-            state.contentFailed(id: s.id, message: "No se pudo reproducir el video: \(msg)")
+        }
+
+        // Precarga del siguiente, con margen para que esté listo cuando empiece el fundido.
+        if r.next == nil, let left {
+            let upcoming = r.itemsKey[nextIndex(r, s)]
+            var lead = 1.0
+            switch upcoming {
+            case .file(let u): lead = MediaKind.of(u) == .video ? 2.0 : 0.5
+            case .url, .page: lead = 8.0
+            case .pattern: lead = 0.5
+            }
+            if left <= fade + lead {
+                let slot = MediaSlot(source: upcoming)
+                slot.preload = true
+                r.next = slot
+                logEvent("precarga «\(upcoming.displayName)» (faltan \(String(format: "%.1f", left)) s)")
+                loadSlot(slot, s)
+            }
+        }
+
+        guard let nx = r.next else { return }
+
+        if nx.failure != nil {
+            // Un contenido que no carga se saltea: la lista sigue con el siguiente.
+            r.consecutiveFailures += 1
+            state.status = "Se salteó «\(nx.source.displayName)»: \(nx.failure ?? "")"
+            logEvent("falló «\(nx.source.displayName)»: \(nx.failure ?? "")")
+            r.next = nil
+            advanceOrder(r)
+            if r.consecutiveFailures >= n && !r.failureReported {
+                r.failureReported = true
+                state.contentFailed(id: s.id, message: "No se pudo reproducir ningún contenido de la lista")
+            }
+            return
+        }
+
+        // Empieza el fundido cuando al actual le queda `fade` y el siguiente ya tiene imagen.
+        if r.fadeStart == nil, nx.texture != nil, nx.sizeReported, let left, left <= fade {
+            r.fadeStart = now
+            nx.startedAt = now
+            nx.preload = false
+            if let v = nx.video {
+                v.player.seek(to: .zero)
+                if s.playing { v.player.play() }
+                v.player.isMuted = s.muted
+            }
+            logEvent("fundido «\(cur.source.displayName)» → «\(nx.source.displayName)» (\(String(format: "%.1f", fade)) s)")
+        }
+
+        guard let start = r.fadeStart else { return }
+        let m = fade <= 0.01 ? 1.0 : min(1.0, (now - start) / fade)
+        r.mix = Float(m)
+        // Audio: el que sale baja y el que entra sube.
+        cur.video?.player.volume = Float(1 - m)
+        nx.video?.player.volume = Float(m)
+
+        if m >= 1 {
+            cur.video?.player.pause()
+            r.cur = nx
+            r.next = nil
+            r.fadeStart = nil
+            r.mix = 0
+            r.consecutiveFailures = 0
+            nx.video?.player.volume = 1
+            advanceOrder(r)
+            state.contentLoaded(id: s.id, aspect: nx.aspect, isVideo: nx.isVideo)
+            logEvent("ahora «\(nx.source.displayName)»")
+        }
+    }
+
+    /// Actualiza un contenido cada frame: textura del video, errores y detección de códecs no soportados.
+    private func syncSlot(_ slot: MediaSlot, _ s: SurfaceModel) {
+        guard let video = slot.video, slot.failure == nil else { return }
+
+        if let msg = video.errorMessage {
+            // Las URL de stream de una página vencen: se vuelve a resolver (hasta 3 veces) antes de rendirse.
+            if case .page = slot.source, slot.retries < 3 {
+                slot.retries += 1
+                loadSlot(slot, s)
+                return
+            }
+            slot.failure = "No se pudo reproducir el video: \(msg)"
             return
         }
         // Video "listo" que no entrega imágenes: casi siempre un códec que AVFoundation no decodifica.
-        if s.playing, video.isReady, !r.sizeReported, !r.failureReported {
-            let since = r.readyAt ?? Date()
-            r.readyAt = since
+        if (s.playing || slot.preload), video.isReady, !slot.sizeReported {
+            let since = slot.readyAt ?? Date()
+            slot.readyAt = since
             if Date().timeIntervalSince(since) > 3 {
-                r.failureReported = true
-                state.contentFailed(id: s.id, message: "El video no entrega imágenes: probablemente usa un códec no compatible. Convertilo a H.264 (MP4), por ejemplo con ffmpeg.")
+                slot.failure = "El video no entrega imágenes: probablemente usa un códec no compatible. Convertilo a H.264 (MP4), por ejemplo con ffmpeg."
                 return
             }
         }
         if video.update(), let t = video.texture {
-            r.texture = t
-            if !r.sizeReported {
-                r.sizeReported = true
-                r.retries = 0
-                state.contentLoaded(id: s.id, aspect: Float(t.width) / Float(t.height), isVideo: true)
-                state.finishedLoading()
+            slot.texture = t
+            if !slot.sizeReported {
+                slot.sizeReported = true
+                slot.retries = 0
+                slot.aspect = Float(t.width) / Float(t.height)
             }
         }
-        if s.playing != r.wasPlaying {
-            r.wasPlaying = s.playing
-            s.playing ? video.player.play() : video.player.pause()
-        }
-        if video.player.isMuted != s.muted { video.player.isMuted = s.muted }
     }
 
-    private func loadSource(_ r: Resources, _ s: SurfaceModel) {
-        r.source = s.source
-        r.video = nil
-        r.sizeReported = false
-        r.failureReported = false
-        r.readyAt = nil
+    // MARK: Carga de un contenido
 
-        switch s.source {
+    private func loadSlot(_ slot: MediaSlot, _ s: SurfaceModel) {
+        slot.loadToken += 1
+        let token = slot.loadToken
+        slot.video = nil
+        slot.texture = nil
+        slot.sizeReported = false
+        slot.failure = nil
+        slot.readyAt = nil
+        let id = s.id
+        let announce = !slot.preload   // los carteles «Cargando…» son solo del contenido que se está mostrando
+
+        switch slot.source {
         case .pattern(let p):
-            r.texture = Generators.texture(device: device, pattern: p)
-            state.contentLoaded(id: s.id, aspect: 1, isVideo: false)
+            slot.texture = Generators.texture(device: device, pattern: p)
+            slot.aspect = 1
+            slot.isVideo = false
+            slot.sizeReported = slot.texture != nil
 
         case .file(let url):
             switch MediaKind.of(url) {
             case .image:
                 do {
-                    let t = try textureLoader.newTexture(URL: url, options: [
-                        .SRGB: false,
-                        .origin: MTKTextureLoader.Origin.topLeft,
-                        .generateMipmaps: true,
-                    ])
-                    r.texture = t
-                    state.contentLoaded(id: s.id, aspect: Float(t.width) / Float(t.height), isVideo: false)
+                    let t = try textureLoader.newTexture(URL: url, options: Renderer.imageOptions)
+                    setImage(slot, t)
                 } catch {
-                    state.contentFailed(id: s.id, message: "No se pudo abrir la imagen: \(error.localizedDescription)")
+                    slot.failure = "No se pudo abrir la imagen: \(error.localizedDescription)"
                 }
             case .video:
-                startVideo(r, s, url)
+                startVideo(slot, s.playing, s.muted, url)
             case nil:
-                state.contentFailed(id: s.id, message: "Formato no soportado")
+                slot.failure = "Formato no soportado"
             }
 
         case .page(let page):
-            r.texture = nil
-            state.status = "Resolviendo \(page.host ?? "link")…"
-            let id = s.id, source = s.source
-            PageResolver.resolve(page) { [weak self] result in
+            if announce { state.status = "Resolviendo \(page.host ?? "link")…" }
+            PageResolver.resolve(page) { [weak self, weak slot] result in
                 DispatchQueue.main.async {
-                    guard let self, let r = self.resources[id], r.source == source,
-                          let current = self.state.surfaces.first(where: { $0.id == id }) else { return }
+                    guard let self, let slot, slot.loadToken == token,
+                          let cur = self.state.surfaces.first(where: { $0.id == id }) else { return }
                     switch result {
                     case .success(let resolved):
-                        self.state.status = "Cargando «\(resolved.title)»…"
-                        self.startVideo(r, current, resolved.stream)
+                        if announce { self.state.status = "Cargando «\(resolved.title)»…" }
+                        self.startVideo(slot, cur.playing, cur.muted, resolved.stream)
                     case .failure(.notInstalled):
-                        self.state.contentFailed(id: id, message: "Para abrir links de YouTube o Vimeo hace falta yt-dlp. Instalalo con «brew install yt-dlp» y volvé a intentar.")
+                        slot.failure = "Para abrir links de YouTube o Vimeo hace falta yt-dlp. Instalalo con «brew install yt-dlp» y volvé a intentar."
                     case .failure(.blocked(let site)):
-                        self.state.contentFailed(id: id, message: "\(site) bloquea el streaming a reproductores externos. Descargalo con «yt-dlp -f b[ext=mp4] <link>» y abrilo como archivo.")
+                        slot.failure = "\(site) bloquea el streaming a reproductores externos. Descargalo con «yt-dlp -f b[ext=mp4] <link>» y abrilo como archivo."
                     case .failure(.failed(let why)):
-                        self.state.contentFailed(id: id, message: "No se pudo resolver el link: \(why)")
+                        slot.failure = "No se pudo resolver el link: \(why)"
                     }
                 }
             }
 
         case .url(let url):
-            state.status = "Cargando \(url.host ?? "URL")…"
+            if announce { state.status = "Cargando \(url.host ?? "URL")…" }
             switch MediaKind.forRemote(url) {
-            case .video: startVideo(r, s, url)
-            case .image: loadRemoteImage(r, s, url)
+            case .video: startVideo(slot, s.playing, s.muted, url)
+            case .image: loadRemoteImage(slot, token, url)
             }
         }
     }
 
-    private func startVideo(_ r: Resources, _ s: SurfaceModel, _ url: URL) {
-        guard let v = VideoSource(url: url, device: device) else {
-            state.contentFailed(id: s.id, message: "No se pudo abrir el video")
-            return
-        }
-        r.video = v
-        r.texture = nil
-        r.wasPlaying = s.playing
-        v.player.isMuted = s.muted
-        if s.playing { v.player.play() }
-        state.contentLoaded(id: s.id, aspect: s.contentAspect, isVideo: true)
+    private func setImage(_ slot: MediaSlot, _ t: MTLTexture) {
+        slot.texture = t
+        slot.aspect = Float(t.width) / Float(t.height)
+        slot.isVideo = false
+        slot.sizeReported = true
     }
 
-    /// Descarga la imagen en segundo plano; si mientras tanto cambió la fuente de la superficie, se descarta.
-    private func loadRemoteImage(_ r: Resources, _ s: SurfaceModel, _ url: URL) {
-        r.texture = nil
-        let id = s.id, source = s.source
-        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+    private func startVideo(_ slot: MediaSlot, _ playing: Bool, _ muted: Bool, _ url: URL) {
+        guard let v = VideoSource(url: url, device: device) else {
+            slot.failure = "No se pudo abrir el video"
+            return
+        }
+        slot.video = v
+        slot.isVideo = true
+        slot.wasPlaying = playing
+        // Un contenido precargado corre en silencio hasta que empieza su fundido.
+        v.player.isMuted = slot.preload ? true : muted
+        v.player.volume = slot.preload ? 0 : 1
+        if playing { v.player.play() }
+    }
+
+    /// Descarga la imagen en segundo plano; si mientras tanto el contenido se recargó o se descartó, se ignora.
+    private func loadRemoteImage(_ slot: MediaSlot, _ token: Int, _ url: URL) {
+        URLSession.shared.dataTask(with: url) { [weak self, weak slot] data, response, error in
             DispatchQueue.main.async {
-                guard let self, let r = self.resources[id], r.source == source else { return }
+                guard let self, let slot, slot.loadToken == token else { return }
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 200
                 guard let data, error == nil, code < 400 else {
-                    let why = error?.localizedDescription ?? "HTTP \(code)"
-                    self.state.contentFailed(id: id, message: "No se pudo descargar la imagen: \(why)")
+                    slot.failure = "No se pudo descargar la imagen: \(error?.localizedDescription ?? "HTTP \(code)")"
                     return
                 }
                 do {
-                    let t = try self.textureLoader.newTexture(data: data, options: [
-                        .SRGB: false,
-                        .origin: MTKTextureLoader.Origin.topLeft,
-                        .generateMipmaps: true,
-                    ])
-                    r.texture = t
-                    self.state.contentLoaded(id: id, aspect: Float(t.width) / Float(t.height), isVideo: false)
-                    self.state.finishedLoading()
+                    self.setImage(slot, try self.textureLoader.newTexture(data: data, options: Renderer.imageOptions))
                 } catch {
-                    self.state.contentFailed(id: id, message: "La URL no es una imagen válida: \(error.localizedDescription)")
+                    slot.failure = "La URL no es una imagen válida: \(error.localizedDescription)"
                 }
             }
         }.resume()

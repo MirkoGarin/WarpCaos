@@ -136,7 +136,25 @@ enum FitMode: String, Codable {
 struct SurfaceModel: Identifiable, Codable {
     var id: UUID
     var name: String
+    /// Primer contenido de la lista de reproducción (y el único si `extraItems` está vacío).
     var source: Source = .pattern(.checkerboard)
+    /// Contenidos siguientes de la lista. Con varios contenidos la superficie los recorre con fundido; con uno solo, lo repite sin fin.
+    var extraItems: [Source] = []
+    /// Veces que se repite cada video antes de pasar al siguiente (solo con varios contenidos).
+    var playlistLoops = 1
+    var playlistShuffle = false
+    /// Duración del fundido entre contenidos, en segundos (0 = corte directo).
+    var playlistFade: Float = 1.0
+    /// Cuánto se muestra una imagen o un patrón antes de pasar al siguiente, en segundos.
+    var playlistStillSeconds: Float = 8
+
+    var items: [Source] { [source] + extraItems }
+
+    mutating func setItems(_ new: [Source]) {
+        let list = new.isEmpty ? [Source.pattern(.checkerboard)] : new
+        source = list[0]
+        extraItems = Array(list.dropFirst())
+    }
 
     // Configuración de la malla (fuente de verdad para crearla cuando `mesh` es nil).
     var cols = 4
@@ -176,7 +194,10 @@ struct SurfaceModel: Identifiable, Codable {
 
     /// Matriz 2×2 (columnas) que lleva el UV centrado de la superficie al UV centrado de la textura:
     /// t = M·(uv − 0.5) + 0.5. Combina volteo, rotación y el ajuste Estirar/Cubrir.
-    var contentMatrix: (SIMD2<Float>, SIMD2<Float>) {
+    var contentMatrix: (SIMD2<Float>, SIMD2<Float>) { contentMatrix(aspect: contentAspect) }
+
+    /// Igual que `contentMatrix`, para un contenido de proporción `aspect` (cada elemento de la lista puede tener la suya).
+    func contentMatrix(aspect: Float) -> (SIMD2<Float>, SIMD2<Float>) {
         let th = contentRotation * .pi / 180, c = cos(th), s = sin(th)
         // Rotación horaria por -θ en coordenadas con y hacia abajo.
         let rinv = simd_float2x2(columns: (SIMD2<Float>(c, -s), SIMD2<Float>(s, c)))
@@ -186,7 +207,7 @@ struct SurfaceModel: Identifiable, Codable {
             return (m.columns.0, m.columns.1)
         }
         // Cubrir: el contenido (alto H, ancho ca·H) debe cubrir el cuadrilátero (sa × 1) ya rotado.
-        let sa = meshAspect, ca = max(contentAspect, 0.001)
+        let sa = meshAspect, ca = max(aspect, 0.001)
         var h: Float = 0
         for corner in [SIMD2<Float>(sa / 2, 0.5), SIMD2<Float>(sa / 2, -0.5)] {
             let r = rinv * corner
@@ -219,6 +240,7 @@ struct SurfaceModel: Identifiable, Codable {
         case id, name, source, cols, rows, smooth, mesh, visible, opacity, playing, muted
         case contentAspect, meshEdited, masks, shape, shapeFeather, fit
         case contentRotation, contentFlipH, contentFlipV, shapeRotation, shapeFlipH, shapeFlipV
+        case extraItems = "playlist", playlistLoops, playlistShuffle, playlistFade, playlistStillSeconds
     }
 }
 
@@ -248,5 +270,10 @@ extension SurfaceModel {
         shapeRotation = try c.decodeIfPresent(Float.self, forKey: .shapeRotation) ?? 0
         shapeFlipH = try c.decodeIfPresent(Bool.self, forKey: .shapeFlipH) ?? false
         shapeFlipV = try c.decodeIfPresent(Bool.self, forKey: .shapeFlipV) ?? false
+        extraItems = try c.decodeIfPresent([Source].self, forKey: .extraItems) ?? []
+        playlistLoops = max(1, try c.decodeIfPresent(Int.self, forKey: .playlistLoops) ?? 1)
+        playlistShuffle = try c.decodeIfPresent(Bool.self, forKey: .playlistShuffle) ?? false
+        playlistFade = try c.decodeIfPresent(Float.self, forKey: .playlistFade) ?? 1
+        playlistStillSeconds = try c.decodeIfPresent(Float.self, forKey: .playlistStillSeconds) ?? 8
     }
 }

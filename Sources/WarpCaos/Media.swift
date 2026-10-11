@@ -9,6 +9,20 @@ final class VideoSource {
     private var keepAlive: CVMetalTexture?
     private var endObserver: NSObjectProtocol?
     private(set) var texture: MTLTexture?
+    /// Veces que el video llegó al final y volvió a empezar (para contar las repeticiones de una lista).
+    private(set) var loopCount = 0
+
+    /// Posición actual dentro de la repetición en curso, en segundos.
+    var currentSeconds: Double {
+        let t = player.currentTime().seconds
+        return t.isFinite ? t : 0
+    }
+
+    /// Duración del video, si ya se conoce (los streams en vivo o aún sin cargar devuelven nil).
+    var durationSeconds: Double? {
+        guard let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 else { return nil }
+        return d
+    }
 
     init?(url: URL, device: MTLDevice) {
         guard CVMetalTextureCacheCreate(nil, nil, device, nil, &cache) == kCVReturnSuccess else { return nil }
@@ -40,6 +54,7 @@ final class VideoSource {
         player = AVPlayer(playerItem: item)
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+            self?.loopCount += 1
             self?.player.seek(to: .zero)
             self?.player.play()
         }

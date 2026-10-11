@@ -109,6 +109,18 @@ final class AppState: ObservableObject {
             if demo == "quad" { s.cols = 2; s.rows = 2 }
             if demo == "mesh" || demo == "linear" { s.cols = 5; s.rows = 5 }
             if demo == "linear" { s.smooth = false }
+            if let list = env["WARPCAOS_PLAYLIST"] {
+                let parts = list.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+                let sources: [Source] = parts.compactMap { p in
+                    if p.hasPrefix("http"), let u = URL(string: p) { return PageResolver.source(for: u) }
+                    return MediaKind.of(URL(fileURLWithPath: p)) != nil ? .file(URL(fileURLWithPath: p)) : nil
+                }
+                if !sources.isEmpty { s.setItems(sources) }
+                if let v = env["WARPCAOS_LOOPS"], let n = Int(v) { s.playlistLoops = max(1, n) }
+                if let v = env["WARPCAOS_FADE"], let f = Float(v) { s.playlistFade = f }
+                if let v = env["WARPCAOS_STILL"], let f = Float(v) { s.playlistStillSeconds = f }
+                s.playlistShuffle = env["WARPCAOS_SHUFFLE"] != nil
+            }
             if let link = env["WARPCAOS_URL"], let url = URL(string: link) { s.source = PageResolver.source(for: url) }
             if let path = env["WARPCAOS_FILE"] {
                 let url = URL(fileURLWithPath: path)
@@ -369,13 +381,100 @@ final class AppState: ObservableObject {
     func openPanel() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image, .movie]
-        panel.allowsMultipleSelection = false
-        panel.message = "Elegí una imagen o un video para la superficie activa"
-        if panel.runModal() == .OK, let url = panel.url { open(url: url) }
+        panel.allowsMultipleSelection = true
+        panel.message = "Elegí una imagen o un video para la superficie activa (varios archivos forman una lista de reproducción)"
+        guard panel.runModal() == .OK else { return }
+        openMany(panel.urls)
+    }
+
+    /// Un archivo reemplaza el contenido; varios arman una lista de reproducción con fundido.
+    func openMany(_ urls: [URL]) {
+        let valid = urls.filter { !$0.isFileURL ? true : MediaKind.of($0) != nil }
+        let skipped = urls.count - valid.count
+        guard !valid.isEmpty else {
+            status = "Formato no soportado: \(urls.first?.lastPathComponent ?? "")"
+            return
+        }
+        if valid.count == 1 { open(url: valid[0]) } else { setItems(valid.map(Self.source(for:))) }
+        if skipped > 0 { status = "\(skipped) archivo(s) con formato no soportado se omitieron" }
+    }
+
+    static func source(for url: URL) -> Source { url.isFileURL ? .file(url) : PageResolver.source(for: url) }
+
+    // MARK: Lista de reproducción (de la superficie activa)
+
+    /// Reemplaza toda la lista.
+    func setItems(_ items: [Source]) {
+        guard let i = activeIndex else { return }
+        registerUndo()
+        surfaces[i].setItems(items)
+        surfaces[i].isVideo = false
+        surfaces[i].playing = true
+        status = nil
+    }
+
+    func addItems(_ new: [Source]) {
+        guard let i = activeIndex, !new.isEmpty else { return }
+        registerUndo()
+        surfaces[i].extraItems += new
+        status = nil
+    }
+
+    func addItemPatterns(_ p: Pattern) { addItems([.pattern(p)]) }
+
+    func addItemFilesPanel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image, .movie]
+        panel.allowsMultipleSelection = true
+        panel.message = "Elegí imágenes o videos para agregar a la lista"
+        guard panel.runModal() == .OK else { return }
+        addItems(panel.urls.filter { MediaKind.of($0) != nil }.map { Source.file($0) })
+    }
+
+    func removeItem(at index: Int) {
+        guard let i = activeIndex, surfaces[i].items.count > 1 else { return }
+        registerUndo()
+        var list = surfaces[i].items
+        list.remove(at: index)
+        surfaces[i].setItems(list)
+    }
+
+    func moveItem(at index: Int, by delta: Int) {
+        guard let i = activeIndex else { return }
+        var list = surfaces[i].items
+        let to = index + delta
+        guard list.indices.contains(index), list.indices.contains(to) else { return }
+        registerUndo()
+        list.swapAt(index, to)
+        surfaces[i].setItems(list)
+    }
+
+    func setPlaylistLoops(_ v: Int) {
+        guard let i = activeIndex else { return }
+        registerUndo(coalesce: "pl-loops")
+        surfaces[i].playlistLoops = min(max(v, 1), 99)
+    }
+
+    func setPlaylistFade(_ v: Float) {
+        guard let i = activeIndex else { return }
+        registerUndo(coalesce: "pl-fade")
+        surfaces[i].playlistFade = v
+    }
+
+    func setPlaylistShuffle(_ v: Bool) {
+        guard let i = activeIndex else { return }
+        registerUndo()
+        surfaces[i].playlistShuffle = v
+    }
+
+    func setPlaylistStillSeconds(_ v: Int) {
+        guard let i = activeIndex else { return }
+        registerUndo(coalesce: "pl-still")
+        surfaces[i].playlistStillSeconds = Float(min(max(v, 1), 600))
     }
 
     /// Pide una URL y la asigna a la superficie activa.
-    func openURLPanel() {
+    func openURLPanel(append: Bool = false) {
         let alert = NSAlert()
         alert.messageText = "Abrir URL"
         alert.informativeText = "Pegá un link directo a un video (.mp4, .mov, .m3u8) o a una imagen (.png, .jpg…), o el link de una página de YouTube o Vimeo (requiere yt-dlp). Se reproduce por streaming, sin descargarlo."
@@ -393,7 +492,7 @@ final class AppState: ObservableObject {
             status = "La URL no es válida (tiene que empezar con http:// o https://)"
             return
         }
-        openRemote(url)
+        if append { addItems([PageResolver.source(for: url)]) } else { openRemote(url) }
     }
 
     /// Links de página (YouTube, Vimeo…) se resuelven a un stream con yt-dlp; el resto se reproduce directo.
@@ -404,7 +503,7 @@ final class AppState: ObservableObject {
     private func setSource(_ s: Source) {
         guard let i = activeIndex else { return }
         registerUndo()
-        surfaces[i].source = s
+        surfaces[i].setItems([s])
         surfaces[i].isVideo = false
         surfaces[i].playing = true
         status = nil
@@ -415,6 +514,9 @@ final class AppState: ObservableObject {
     func contentLoaded(id: UUID, aspect: Float, isVideo: Bool) {
         guard let i = surfaces.firstIndex(where: { $0.id == id }) else { return }
         if surfaces[i].isVideo != isVideo { surfaces[i].isVideo = isVideo }
+        // Con varios contenidos la superficie es un contenedor fijo: cada uno se acomoda con Estirar/Cubrir,
+        // sin tocar la proporción ni la malla.
+        guard surfaces[i].items.count == 1 else { return }
         if abs(aspect - surfaces[i].contentAspect) > 0.001 {
             surfaces[i].contentAspect = aspect
             if !surfaces[i].meshEdited { surfaces[i].mesh = nil }
@@ -428,7 +530,7 @@ final class AppState: ObservableObject {
 
     func contentFailed(id: UUID, message: String) {
         guard let i = surfaces.firstIndex(where: { $0.id == id }) else { return }
-        surfaces[i].source = .pattern(.checkerboard)
+        surfaces[i].setItems([.pattern(.checkerboard)])
         surfaces[i].isVideo = false
         status = message
     }
