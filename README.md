@@ -113,7 +113,9 @@ The mapping concepts (quad warp, mesh warp, shader lamps) follow J. J. M. Tiriga
 
 ### License
 
-No license has been specified yet.
+Copyright (C) 2026 Mirko Garin.
+
+WarpCaos is free software, licensed under the **GNU General Public License v3.0** (GPL-3.0). You may use, study, modify and share it; derivative works that you distribute must also be released under the GPL-3.0 with their source code. See [`LICENSE`](LICENSE) for the full text.
 
 ---
 
@@ -226,4 +228,6 @@ Los conceptos de mapeo (quad warp, mesh warp, shader lamps) siguen a J. J. M. Ti
 
 ### Licencia
 
-Todavía no se especificó una licencia.
+Copyright (C) 2026 Mirko Garin.
+
+WarpCaos es software libre, publicado bajo la **Licencia Pública General de GNU v3.0** (GPL-3.0). Podés usarlo, estudiarlo, modificarlo y compartirlo; las obras derivadas que distribuyas también deben publicarse bajo la GPL-3.0, con su código fuente. El texto completo está en [`LICENSE`](LICENSE).
