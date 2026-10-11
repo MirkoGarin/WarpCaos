@@ -132,6 +132,14 @@ enum FitMode: String, Codable {
     case cover = "Cubrir"      // conserva la proporción y recorta lo que sobra
 }
 
+/// Cómo se decide cuánto dura cada contenido de una lista.
+enum PlaylistMode: String, Codable {
+    /// Cada video se repite N veces; las imágenes y los patrones duran `playlistStillSeconds`.
+    case loops
+    /// Cada contenido dura `playlistSeconds`: los videos cortos se repiten hasta completarlo y los largos se cortan.
+    case time
+}
+
 /// Una superficie de proyección: contenido + malla de warp + propiedades de capa.
 struct SurfaceModel: Identifiable, Codable {
     var id: UUID
@@ -147,6 +155,9 @@ struct SurfaceModel: Identifiable, Codable {
     var playlistFade: Float = 1.0
     /// Cuánto se muestra una imagen o un patrón antes de pasar al siguiente, en segundos.
     var playlistStillSeconds: Float = 8
+    var playlistMode: PlaylistMode = .loops
+    /// Duración de cada contenido en el modo `.time`, en segundos.
+    var playlistSeconds: Float = 30
 
     var items: [Source] { [source] + extraItems }
 
@@ -240,7 +251,7 @@ struct SurfaceModel: Identifiable, Codable {
         case id, name, source, cols, rows, smooth, mesh, visible, opacity, playing, muted
         case contentAspect, meshEdited, masks, shape, shapeFeather, fit
         case contentRotation, contentFlipH, contentFlipV, shapeRotation, shapeFlipH, shapeFlipV
-        case extraItems = "playlist", playlistLoops, playlistShuffle, playlistFade, playlistStillSeconds
+        case extraItems = "playlist", playlistLoops, playlistShuffle, playlistFade, playlistStillSeconds, playlistMode, playlistSeconds
     }
 }
 
@@ -275,5 +286,7 @@ extension SurfaceModel {
         playlistShuffle = try c.decodeIfPresent(Bool.self, forKey: .playlistShuffle) ?? false
         playlistFade = try c.decodeIfPresent(Float.self, forKey: .playlistFade) ?? 1
         playlistStillSeconds = try c.decodeIfPresent(Float.self, forKey: .playlistStillSeconds) ?? 8
+        playlistMode = try c.decodeIfPresent(PlaylistMode.self, forKey: .playlistMode) ?? .loops
+        playlistSeconds = try c.decodeIfPresent(Float.self, forKey: .playlistSeconds) ?? 30
     }
 }

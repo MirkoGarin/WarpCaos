@@ -3,6 +3,13 @@ import simd
 import Combine
 import UniformTypeIdentifiers
 
+/// Qué está reproduciendo una superficie con lista: contenido actual (índice en `items`) y tiempo restante.
+struct PlaybackInfo: Equatable {
+    var index: Int
+    /// Segundos que le quedan al contenido actual; nil mientras todavía carga.
+    var remaining: Int?
+}
+
 /// Estado compartido entre la UI SwiftUI, la vista de edición y el renderer.
 final class AppState: ObservableObject {
     static let shared = AppState()
@@ -13,6 +20,8 @@ final class AppState: ObservableObject {
     @Published var selectedMaskID: UUID?
     @Published var showOverlay = true
     @Published var status: String?
+    /// Progreso de las listas de reproducción por superficie (lo publica el renderer ~1 vez por segundo).
+    @Published private(set) var playback: [UUID: PlaybackInfo] = [:]
     /// Proporción (ancho/alto) del lienzo; coincide con la pantalla de salida para que lo editado sea lo proyectado.
     @Published var canvasAspect: Float = 16.0 / 9.0
     @Published var outputActive = false
@@ -118,6 +127,8 @@ final class AppState: ObservableObject {
                 if !sources.isEmpty { s.setItems(sources) }
                 if let v = env["WARPCAOS_LOOPS"], let n = Int(v) { s.playlistLoops = max(1, n) }
                 if let v = env["WARPCAOS_FADE"], let f = Float(v) { s.playlistFade = f }
+                if env["WARPCAOS_MODE"] == "time" { s.playlistMode = .time }
+                if let v = env["WARPCAOS_SECONDS"], let f = Float(v) { s.playlistSeconds = f }
                 if let v = env["WARPCAOS_STILL"], let f = Float(v) { s.playlistStillSeconds = f }
                 s.playlistShuffle = env["WARPCAOS_SHUFFLE"] != nil
             }
@@ -447,6 +458,22 @@ final class AppState: ObservableObject {
         registerUndo()
         list.swapAt(index, to)
         surfaces[i].setItems(list)
+    }
+
+    func setPlayback(_ id: UUID, _ info: PlaybackInfo?) {
+        if playback[id] != info { playback[id] = info }
+    }
+
+    func setPlaylistMode(_ m: PlaylistMode) {
+        guard let i = activeIndex, surfaces[i].playlistMode != m else { return }
+        registerUndo()
+        surfaces[i].playlistMode = m
+    }
+
+    func setPlaylistSeconds(_ v: Int) {
+        guard let i = activeIndex else { return }
+        registerUndo(coalesce: "pl-seconds")
+        surfaces[i].playlistSeconds = Float(min(max(v, 1), 3600))
     }
 
     func setPlaylistLoops(_ v: Int) {

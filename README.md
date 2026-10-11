@@ -17,7 +17,7 @@ Built with Swift, SwiftUI and Metal. It compiles with the Xcode Command Line Too
 - **Shaped surfaces** — circle/ellipse, triangle, diamond, pentagon, hexagon, octagon and star. A shape lives inside a 4-corner quad, so it follows the perspective and is easy to edit; raise the grid to bend it like a mesh. Optional soft edge.
 - **Masks** — polygon masks per surface with *Show / Hide*, *Invert* and feathered edges (exact distance-based, no blur passes).
 - **Flip & rotate** — flip horizontally/vertically and rotate (±90° steps or any angle) the content and, independently, the shape of each surface. Rotated shapes shrink automatically to stay inside their quad.
-- **Playlists** — a surface can hold several contents (videos, images, patterns, URLs) that play one after another with a **crossfade** (0–3 s, or a straight cut). Each video repeats *N* times before moving on, images and patterns last a set number of seconds, and the order can be **shuffled** (no immediate repeats). With a single content it simply loops forever. Select several files in *Open…* or drop them on the window to build a list; each item fits its container with the surface's *Stretch/Cover* setting.
+- **Playlists** — a surface can hold several contents (videos, images, patterns, URLs) that play one after another with a **crossfade** (0–3 s, or a straight cut). Choose how long each content lasts: **by repetitions** (each video repeats *N* times; images and patterns last a set number of seconds) or **by time** (every content lasts *X* seconds — short videos repeat to fill it, long ones are cut). The list shows which item is playing and the time left. The order can be **shuffled** (no immediate repeats). With a single content it simply loops forever. Select several files in *Open…* or drop them on the window to build a list; each item fits its container with the surface's *Stretch/Cover* setting.
 - **Open URL** — stream a video (`.mp4`, `.mov`, HLS `.m3u8`) or load an image from a direct link, without downloading it first. Links to **Vimeo** pages are resolved to a direct stream with [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (`brew install yt-dlp`) — still streaming, no file is saved. **YouTube** blocks external players, so WarpCaos explains how to download the video instead.
 - **Content** — images and video (looping, mute, rotation metadata respected) plus built-in calibration patterns: checkerboard, grid, UV, color bars, white.
 - **Multiple surfaces** — layers with order, opacity and visibility; each surface has its own content, grid and masks.
@@ -103,7 +103,7 @@ Environment variables used for testing without the UI:
 | `WARPCAOS_FILE=<path>` | Initial media for the first surface |
 | `WARPCAOS_URL=<url>` | Initial video/image URL (or Vimeo page link) for the first surface (disables autosave) |
 | `WARPCAOS_YTDLP=<path>` | Force a specific `yt-dlp` binary |
-| `WARPCAOS_PLAYLIST=<a,b,c>` | Comma-separated files/URLs for the first surface's playlist (with `WARPCAOS_FADE`, `WARPCAOS_LOOPS`, `WARPCAOS_STILL`, `WARPCAOS_SHUFFLE`; disables autosave) |
+| `WARPCAOS_PLAYLIST=<a,b,c>` | Comma-separated files/URLs for the first surface's playlist (with `WARPCAOS_FADE`, `WARPCAOS_LOOPS`, `WARPCAOS_STILL`, `WARPCAOS_SHUFFLE`, `WARPCAOS_MODE=time`, `WARPCAOS_SECONDS`; disables autosave) |
 | `WARPCAOS_LOG=1` | Print playlist events (preload, fade, switch) to stdout |
 | `WARPCAOS_PROJECT=<path>` | Open a project at launch |
 | `WARPCAOS_SAVE_TO=<path>` | Save the project after 3 s |
@@ -113,7 +113,7 @@ Recovery copies are written to `~/Library/Application Support/WarpCaos/autosave.
 
 ### Status
 
-Version 1.4. Pre-built installers (`.dmg`) are available on the [Releases](https://github.com/MirkoGarin/WarpCaos/releases) page. Developed and tested on an Intel Mac with macOS 15; the Apple Silicon slice is built but has not been run on that hardware. Fullscreen output on external projectors depends on your display setup — use a direct wired connection (HDMI/DisplayPort) rather than AirPlay for accurate, low-latency mapping.
+Version 1.5. Pre-built installers (`.dmg`) are available on the [Releases](https://github.com/MirkoGarin/WarpCaos/releases) page. Developed and tested on an Intel Mac with macOS 15; the Apple Silicon slice is built but has not been run on that hardware. Fullscreen output on external projectors depends on your display setup — use a direct wired connection (HDMI/DisplayPort) rather than AirPlay for accurate, low-latency mapping.
 
 ### Credits
 
@@ -140,7 +140,7 @@ Hecha con Swift, SwiftUI y Metal. Se compila con las Command Line Tools de Xcode
 - **Superficies con forma** — círculo/elipse, triángulo, rombo, pentágono, hexágono, octágono y estrella. La forma vive dentro de un cuadrilátero de 4 esquinas, así que sigue la perspectiva y es fácil de editar; subiendo la grilla se deforma como una malla. Borde suave opcional.
 - **Máscaras** — máscaras poligonales por superficie con *Mostrar / Ocultar*, *Invertir* y bordes difuminados (por distancia exacta, sin pasadas de blur).
 - **Voltear y rotar** — voltear horizontal/verticalmente y rotar (de a 90° o con cualquier ángulo) el contenido y, por separado, la forma de cada superficie. Las formas rotadas se achican solas para seguir dentro del cuadrilátero.
-- **Listas de reproducción** — una superficie puede tener varios contenidos (videos, imágenes, patrones, URLs) que se suceden con **fundido** (de 0 a 3 s, o corte directo). Cada video se repite *N* veces antes de pasar al siguiente, las imágenes y patrones duran una cantidad de segundos, y el orden puede ser **aleatorio** (sin repetir el mismo seguido). Con un solo contenido se repite sin fin. Elegí varios archivos en *Abrir…* o soltalos en la ventana para armar la lista; cada uno se acomoda en su contenedor con el ajuste *Estirar/Cubrir* de la superficie.
+- **Listas de reproducción** — una superficie puede tener varios contenidos (videos, imágenes, patrones, URLs) que se suceden con **fundido** (de 0 a 3 s, o corte directo). Elegís cuánto dura cada contenido: **por repeticiones** (cada video se repite *N* veces; las imágenes y patrones duran una cantidad de segundos) o **por tiempo** (cada contenido dura *X* segundos: los videos cortos se repiten para completarlo y los largos se cortan). La lista marca cuál se está reproduciendo y cuánto le queda. El orden puede ser **aleatorio** (sin repetir el mismo seguido). Con un solo contenido se repite sin fin. Elegí varios archivos en *Abrir…* o soltalos en la ventana para armar la lista; cada uno se acomoda en su contenedor con el ajuste *Estirar/Cubrir* de la superficie.
 - **Abrir URL** — reproducí por streaming un video (`.mp4`, `.mov`, HLS `.m3u8`) o cargá una imagen desde un link directo, sin descargarlo antes. Los links de páginas de **Vimeo** se resuelven a un stream directo con [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (`brew install yt-dlp`): sigue siendo streaming y no se guarda ningún archivo. **YouTube** bloquea a los reproductores externos, así que WarpCaos explica cómo descargar el video.
 - **Contenido** — imágenes y video (con loop, silencio y rotación de metadatos respetada), más patrones de calibración: tablero, grilla, UV, barras de color y blanco.
 - **Varias superficies** — capas con orden, opacidad y visibilidad; cada superficie tiene su propio contenido, grilla y máscaras.
@@ -226,7 +226,7 @@ Variables de entorno para probar sin usar la interfaz:
 | `WARPCAOS_FILE=<ruta>` | Media inicial de la primera superficie |
 | `WARPCAOS_URL=<url>` | URL de video o imagen (o link de página de Vimeo) inicial de la primera superficie (desactiva el autosave) |
 | `WARPCAOS_YTDLP=<ruta>` | Fuerza un binario concreto de `yt-dlp` |
-| `WARPCAOS_PLAYLIST=<a,b,c>` | Archivos/URLs separados por coma para la lista de la primera superficie (con `WARPCAOS_FADE`, `WARPCAOS_LOOPS`, `WARPCAOS_STILL`, `WARPCAOS_SHUFFLE`; desactiva el autosave) |
+| `WARPCAOS_PLAYLIST=<a,b,c>` | Archivos/URLs separados por coma para la lista de la primera superficie (con `WARPCAOS_FADE`, `WARPCAOS_LOOPS`, `WARPCAOS_STILL`, `WARPCAOS_SHUFFLE`, `WARPCAOS_MODE=time`, `WARPCAOS_SECONDS`; desactiva el autosave) |
 | `WARPCAOS_LOG=1` | Imprime los eventos de la lista (precarga, fundido, cambio) por stdout |
 | `WARPCAOS_PROJECT=<ruta>` | Abre un proyecto al iniciar |
 | `WARPCAOS_SAVE_TO=<ruta>` | Guarda el proyecto a los 3 s |
@@ -236,7 +236,7 @@ Las copias de recuperación se escriben en `~/Library/Application Support/WarpCa
 
 ### Estado
 
-Versión 1.4. Los instaladores ya compilados (`.dmg`) están en la página de [Releases](https://github.com/MirkoGarin/WarpCaos/releases). Desarrollada y probada en una Mac Intel con macOS 15; la versión para Apple Silicon se compila pero no se ejecutó en ese hardware. La salida a pantalla completa en proyectores externos depende de tu configuración: usá una conexión directa por cable (HDMI/DisplayPort) y no AirPlay para un mapeo preciso y de baja latencia.
+Versión 1.5. Los instaladores ya compilados (`.dmg`) están en la página de [Releases](https://github.com/MirkoGarin/WarpCaos/releases). Desarrollada y probada en una Mac Intel con macOS 15; la versión para Apple Silicon se compila pero no se ejecutó en ese hardware. La salida a pantalla completa en proyectores externos depende de tu configuración: usá una conexión directa por cable (HDMI/DisplayPort) y no AirPlay para un mapeo preciso y de baja latencia.
 
 ### Créditos
 

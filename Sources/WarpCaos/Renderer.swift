@@ -45,6 +45,8 @@ private final class MediaSlot {
     var startedAt: Double = 0
     /// Invalida respuestas asíncronas (descarga, yt-dlp) de una carga anterior.
     var loadToken = 0
+    /// Posición de este contenido en `items` de la superficie.
+    var index = 0
 
     init(source: Source) { self.source = source }
 }
@@ -64,6 +66,7 @@ private final class Resources {
     var failureReported = false
     var consecutiveFailures = 0
     var lastTick = CACurrentMediaTime()
+    var lastPublished: PlaybackInfo?
 
     // Malla.
     var revision = -1
@@ -307,6 +310,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         r.failureReported = false
         r.consecutiveFailures = 0
         let slot = MediaSlot(source: items[r.order[0]])
+        slot.index = r.order[0]
         r.cur = slot
         logEvent("lista: \(items.count) contenido(s), empieza «\(slot.source.displayName)»")
         loadSlot(slot, s)
@@ -332,6 +336,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     /// Segundos que le quedan al contenido actual (nil si todavía no empezó a mostrarse).
     private func timeLeft(_ slot: MediaSlot, _ s: SurfaceModel, _ now: Double) -> Double? {
         guard slot.sizeReported else { return nil }
+        // Por tiempo: todos duran lo mismo (los videos cortos se repiten solos hasta completarlo, los largos se cortan).
+        if s.playlistMode == .time { return Double(s.playlistSeconds) - (now - slot.startedAt) }
         if let v = slot.video, let d = v.durationSeconds {
             let total = Double(max(1, s.playlistLoops)) * d
             return total - (Double(v.loopCount) * d + v.currentSeconds)
@@ -370,6 +376,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
 
         guard items.count > 1 else {
+            state.setPlayback(s.id, nil)
             // Un solo contenido: se repite sin fin; si falla, se vuelve al tablero.
             if let f = cur.failure, !r.failureReported {
                 r.failureReported = true
@@ -378,6 +385,12 @@ final class Renderer: NSObject, MTKViewDelegate {
             return
         }
         advancePlaylist(r, s, cur, now)
+
+        // Progreso para el panel: contenido actual y segundos restantes (se publica solo cuando cambia).
+        if let c = r.cur {
+            let info = PlaybackInfo(index: c.index, remaining: timeLeft(c, s, now).map { max(0, Int($0.rounded(.up))) })
+            if info != r.lastPublished { r.lastPublished = info; state.setPlayback(s.id, info) }
+        }
     }
 
     private func advancePlaylist(_ r: Resources, _ s: SurfaceModel, _ cur: MediaSlot, _ now: Double) {
@@ -398,7 +411,8 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         // Precarga del siguiente, con margen para que esté listo cuando empiece el fundido.
         if r.next == nil, let left {
-            let upcoming = r.itemsKey[nextIndex(r, s)]
+            let upcomingIndex = nextIndex(r, s)
+            let upcoming = r.itemsKey[upcomingIndex]
             var lead = 1.0
             switch upcoming {
             case .file(let u): lead = MediaKind.of(u) == .video ? 2.0 : 0.5
@@ -407,6 +421,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
             if left <= fade + lead {
                 let slot = MediaSlot(source: upcoming)
+                slot.index = upcomingIndex
                 slot.preload = true
                 r.next = slot
                 logEvent("precarga «\(upcoming.displayName)» (faltan \(String(format: "%.1f", left)) s)")
