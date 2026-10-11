@@ -48,6 +48,11 @@ struct WarpCaosApp: App {
                 Button("Eliminar superficie") { state.deleteActive() }
                     .keyboardShortcut(.delete, modifiers: .command)
             }
+            CommandGroup(after: .toolbar) {
+                Button("Detener salida") { state.stopOutput() }
+                    .keyboardShortcut(".", modifiers: .command)
+                    .disabled(!state.outputActive)
+            }
             CommandGroup(replacing: .undoRedo) {
                 Button("Deshacer") { state.undo() }
                     .keyboardShortcut("z")

@@ -113,7 +113,7 @@ Recovery copies are written to `~/Library/Application Support/WarpCaos/autosave.
 
 ### Status
 
-Version 1.5. Pre-built installers (`.dmg`) are available on the [Releases](https://github.com/MirkoGarin/WarpCaos/releases) page. Developed and tested on an Intel Mac with macOS 15; the Apple Silicon slice is built but has not been run on that hardware. Fullscreen output on external projectors depends on your display setup — use a direct wired connection (HDMI/DisplayPort) rather than AirPlay for accurate, low-latency mapping.
+Version 1.5.1. Pre-built installers (`.dmg`) are available on the [Releases](https://github.com/MirkoGarin/WarpCaos/releases) page. Developed and tested on an Intel Mac with macOS 15; the Apple Silicon slice is built but has not been run on that hardware. Fullscreen output on external projectors depends on your display setup — use a direct wired connection (HDMI/DisplayPort) rather than AirPlay for accurate, low-latency mapping.
 
 ### Credits
 
@@ -236,7 +236,7 @@ Las copias de recuperación se escriben en `~/Library/Application Support/WarpCa
 
 ### Estado
 
-Versión 1.5. Los instaladores ya compilados (`.dmg`) están en la página de [Releases](https://github.com/MirkoGarin/WarpCaos/releases). Desarrollada y probada en una Mac Intel con macOS 15; la versión para Apple Silicon se compila pero no se ejecutó en ese hardware. La salida a pantalla completa en proyectores externos depende de tu configuración: usá una conexión directa por cable (HDMI/DisplayPort) y no AirPlay para un mapeo preciso y de baja latencia.
+Versión 1.5.1. Los instaladores ya compilados (`.dmg`) están en la página de [Releases](https://github.com/MirkoGarin/WarpCaos/releases). Desarrollada y probada en una Mac Intel con macOS 15; la versión para Apple Silicon se compila pero no se ejecutó en ese hardware. La salida a pantalla completa en proyectores externos depende de tu configuración: usá una conexión directa por cable (HDMI/DisplayPort) y no AirPlay para un mapeo preciso y de baja latencia.
 
 ### Créditos
 
