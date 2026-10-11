@@ -58,9 +58,9 @@ enum ShapeKind: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// Contorno en UV (0...1, y hacia abajo), con las aristas subdivididas para seguir la deformación de la malla.
-    /// Debe coincidir con las SDF de `Shaders`.
-    func outlineUV() -> [SIMD2<Float>] {
+    /// Contorno en el cuadrado normalizado q (−1...1, y hacia arriba), ya rotado y volteado, con las aristas
+    /// subdivididas para seguir la deformación de la malla. Debe coincidir con las SDF de `Shaders`.
+    func qOutline(angle: Float = 0, flipH: Bool = false, flipV: Bool = false) -> [SIMD2<Float>] {
         // Espacio de forma `p` (vértice hacia arriba) y su ajuste al cuadrado [-1,1]².
         func poly(_ n: Int) -> [SIMD2<Float>] {
             (0..<n).map { k in
@@ -86,18 +86,35 @@ enum ShapeKind: String, Codable, CaseIterable, Identifiable {
             }
             scale = [0.951, 0.9045]; offsetY = 0.0955
         }
-        // p → q (cuadrado normalizado) → UV.
-        let uv: [SIMD2<Float>] = verts.map { p in
-            let q = SIMD2<Float>(p.x / scale.x, (p.y - offsetY) / scale.y)
-            return [q.x / 2 + 0.5, 0.5 - q.y / 2]
+        // p → q' (cuadrado normalizado) → q (aplicando la inversa de la transformación del shader, q' = R(θ)·F·q).
+        let th = angle * .pi / 180, c = cos(th), s = sin(th)
+        let qs: [SIMD2<Float>] = verts.map { p in
+            let qp = SIMD2<Float>(p.x / scale.x, (p.y - offsetY) / scale.y)
+            var q = SIMD2<Float>(c * qp.x + s * qp.y, -s * qp.x + c * qp.y)   // R(-θ)
+            if flipH { q.x = -q.x }
+            if flipV { q.y = -q.y }
+            return q
         }
-        guard self != .ellipse else { return uv }
+        guard self != .ellipse else { return qs }
         var out: [SIMD2<Float>] = []
-        for i in 0..<uv.count {
-            let a = uv[i], b = uv[(i + 1) % uv.count]
+        for i in 0..<qs.count {
+            let a = qs[i], b = qs[(i + 1) % qs.count]
             for k in 0..<16 { out.append(a + (b - a) * (Float(k) / 16)) }
         }
         return out
+    }
+
+    /// Factor (≥ 1) por el que se achica la forma para que, rotada o volteada, siga cabiendo en el cuadrilátero.
+    func fitScale(angle: Float, flipH: Bool, flipV: Bool) -> Float {
+        guard self != .rectangle else { return 1 }
+        let e = qOutline(angle: angle, flipH: flipH, flipV: flipV).map { max(abs($0.x), abs($0.y)) }.max() ?? 1
+        return e > 1.0005 ? e : 1
+    }
+
+    /// Contorno en UV (0...1, y hacia abajo), ajustado al cuadrilátero.
+    func outlineUV(angle: Float = 0, flipH: Bool = false, flipV: Bool = false) -> [SIMD2<Float>] {
+        let e = fitScale(angle: angle, flipH: flipH, flipV: flipV)
+        return qOutline(angle: angle, flipH: flipH, flipV: flipV).map { [$0.x / e / 2 + 0.5, 0.5 - $0.y / e / 2] }
     }
 }
 
@@ -140,6 +157,52 @@ struct SurfaceModel: Identifiable, Codable {
     var shapeFeather: Float = 0
     var fit: FitMode = .stretch
 
+    /// Rotación (grados, sentido horario) y volteo del contenido dentro de la superficie.
+    var contentRotation: Float = 0
+    var contentFlipH = false
+    var contentFlipV = false
+    /// Rotación y volteo de la forma dentro del cuadrilátero.
+    var shapeRotation: Float = 0
+    var shapeFlipH = false
+    var shapeFlipV = false
+
+    /// Matriz 2×2 (columnas) que lleva el UV centrado de la superficie al UV centrado de la textura:
+    /// t = M·(uv − 0.5) + 0.5. Combina volteo, rotación y el ajuste Estirar/Cubrir.
+    var contentMatrix: (SIMD2<Float>, SIMD2<Float>) {
+        let th = contentRotation * .pi / 180, c = cos(th), s = sin(th)
+        // Rotación horaria por -θ en coordenadas con y hacia abajo.
+        let rinv = simd_float2x2(columns: (SIMD2<Float>(c, -s), SIMD2<Float>(s, c)))
+        let flip = simd_float2x2(diagonal: SIMD2<Float>(contentFlipH ? -1 : 1, contentFlipV ? -1 : 1))
+        if fit == .stretch {
+            let m = rinv * flip
+            return (m.columns.0, m.columns.1)
+        }
+        // Cubrir: el contenido (alto H, ancho ca·H) debe cubrir el cuadrilátero (sa × 1) ya rotado.
+        let sa = meshAspect, ca = max(contentAspect, 0.001)
+        var h: Float = 0
+        for corner in [SIMD2<Float>(sa / 2, 0.5), SIMD2<Float>(sa / 2, -0.5)] {
+            let r = rinv * corner
+            h = max(h, 2 * abs(r.x) / ca, 2 * abs(r.y))
+        }
+        h = max(h, 0.001)
+        let size = simd_float2x2(diagonal: SIMD2<Float>(1 / (ca * h), 1 / h))
+        let phys = simd_float2x2(diagonal: SIMD2<Float>(sa, 1))
+        let m = size * rinv * phys * flip
+        return (m.columns.0, m.columns.1)
+    }
+
+    /// Matriz 2×2 (columnas) aplicada al cuadrado normalizado q (y hacia arriba) antes de evaluar la forma:
+    /// q' = R(θ)·F·q.
+    var shapeMatrix: (SIMD2<Float>, SIMD2<Float>) {
+        let th = shapeRotation * .pi / 180, c = cos(th), s = sin(th)
+        let r = simd_float2x2(columns: (SIMD2<Float>(c, s), SIMD2<Float>(-s, c)))
+        let flip = simd_float2x2(diagonal: SIMD2<Float>(shapeFlipH ? -1 : 1, shapeFlipV ? -1 : 1))
+        // Achicar la forma = agrandar q' (la forma se evalúa en q' = e·R·F·q).
+        let e = shape.fitScale(angle: shapeRotation, flipH: shapeFlipH, flipV: shapeFlipV)
+        let m = r * flip * e
+        return (m.columns.0, m.columns.1)
+    }
+
     /// Proporción objetivo del cuadrilátero al crearlo: las formas son cuadradas; el rectángulo sigue al contenido.
     var meshAspect: Float { shape == .rectangle ? contentAspect : 1 }
 
@@ -147,6 +210,7 @@ struct SurfaceModel: Identifiable, Codable {
     private enum CodingKeys: String, CodingKey {
         case id, name, source, cols, rows, smooth, mesh, visible, opacity, playing, muted
         case contentAspect, meshEdited, masks, shape, shapeFeather, fit
+        case contentRotation, contentFlipH, contentFlipV, shapeRotation, shapeFlipH, shapeFlipV
     }
 }
 
@@ -170,5 +234,11 @@ extension SurfaceModel {
         shape = try c.decodeIfPresent(ShapeKind.self, forKey: .shape) ?? .rectangle
         shapeFeather = try c.decodeIfPresent(Float.self, forKey: .shapeFeather) ?? 0
         fit = try c.decodeIfPresent(FitMode.self, forKey: .fit) ?? .stretch
+        contentRotation = try c.decodeIfPresent(Float.self, forKey: .contentRotation) ?? 0
+        contentFlipH = try c.decodeIfPresent(Bool.self, forKey: .contentFlipH) ?? false
+        contentFlipV = try c.decodeIfPresent(Bool.self, forKey: .contentFlipV) ?? false
+        shapeRotation = try c.decodeIfPresent(Float.self, forKey: .shapeRotation) ?? 0
+        shapeFlipH = try c.decodeIfPresent(Bool.self, forKey: .shapeFlipH) ?? false
+        shapeFlipV = try c.decodeIfPresent(Bool.self, forKey: .shapeFlipV) ?? false
     }
 }

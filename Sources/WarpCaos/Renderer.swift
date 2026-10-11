@@ -8,7 +8,10 @@ private struct FragUniform {
     var maskCount: UInt32
     var shape: UInt32
     var shapeFeather: Float
-    var uvScale: SIMD2<Float>
+    var uvM0: SIMD2<Float>
+    var uvM1: SIMD2<Float>
+    var shM0: SIMD2<Float>
+    var shM1: SIMD2<Float>
 }
 
 private struct MaskInfo {
@@ -197,13 +200,10 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
             let maskCount = infos.count
             if infos.isEmpty { pts = [.zero]; infos = [MaskInfo(start: 0, count: 0, feather: 0, flags: 0)] }
-            var uvScale = SIMD2<Float>(1, 1)
-            if s.fit == .cover {
-                let sa = s.meshAspect, ca = s.contentAspect
-                uvScale = ca > sa ? [sa / ca, 1] : [1, ca / sa]
-            }
+            let cm = s.contentMatrix, sm = s.shapeMatrix
             var u = FragUniform(viewport: viewport, origin: origin, opacity: s.opacity, maskCount: UInt32(maskCount),
-                                shape: s.shape.shaderID, shapeFeather: s.shapeFeather, uvScale: uvScale)
+                                shape: s.shape.shaderID, shapeFeather: s.shapeFeather,
+                                uvM0: cm.0, uvM1: cm.1, shM0: sm.0, shM1: sm.1)
 
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.setFragmentTexture(tex, index: 0)
@@ -326,7 +326,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         enc.setViewport(canvas.0)
         if let a = state.active, a.shape != .rectangle, a.visible, let mesh = a.mesh {
             var line: [Float] = []
-            let outline = a.shape.outlineUV()
+            let outline = a.shape.outlineUV(angle: a.shapeRotation, flipH: a.shapeFlipH, flipV: a.shapeFlipV)
             for k in 0...outline.count {
                 let uv = outline[k % outline.count]
                 let q = Mesh.ndc(mesh.screenPoint(u: uv.x, v: uv.y))

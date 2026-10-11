@@ -138,6 +138,45 @@ struct OutputMenu: View {
     }
 }
 
+/// Rotar (±90° y ángulo libre) y voltear (H/V) el contenido o la forma de la superficie activa.
+struct TransformControls: View {
+    @ObservedObject var state: AppState
+    let title: String
+    let target: AppState.TransformTarget
+    let angle: Float
+    let flipH: Bool
+    let flipV: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(title)
+                Spacer()
+                Button { state.rotate(target, by: -90) } label: { Image(systemName: "rotate.left") }
+                    .help("Girar 90° a la izquierda")
+                Button { state.rotate(target, by: 90) } label: { Image(systemName: "rotate.right") }
+                    .help("Girar 90° a la derecha")
+                Toggle(isOn: Binding(get: { flipH }, set: { _ in state.flip(target, horizontal: true) })) {
+                    Image(systemName: "arrow.left.and.right")
+                }
+                .toggleStyle(.button).help("Voltear horizontalmente")
+                Toggle(isOn: Binding(get: { flipV }, set: { _ in state.flip(target, horizontal: false) })) {
+                    Image(systemName: "arrow.up.and.down")
+                }
+                .toggleStyle(.button).help("Voltear verticalmente")
+                Button { state.resetTransform(target) } label: { Image(systemName: "arrow.counterclockwise") }
+                    .help("Restablecer")
+                    .disabled(angle == 0 && !flipH && !flipV)
+            }
+            .buttonStyle(.borderless)
+            HStack {
+                Slider(value: Binding(get: { Double(angle) }, set: { state.setAngle(target, Float($0)) }), in: -180...180)
+                Text("\(Int(angle.rounded()))°").monospacedDigit().frame(width: 40, alignment: .trailing)
+            }
+        }
+    }
+}
+
 struct SidebarView: View {
     @ObservedObject var state: AppState
 
@@ -253,6 +292,13 @@ struct InspectorView: View {
                 Text("Cubrir").tag(FitMode.cover)
             }
             .pickerStyle(.segmented)
+
+            TransformControls(state: state, title: "Contenido", target: .content, angle: surface.contentRotation,
+                              flipH: surface.contentFlipH, flipV: surface.contentFlipV)
+            if surface.shape != .rectangle {
+                TransformControls(state: state, title: "Forma", target: .shape, angle: surface.shapeRotation,
+                                  flipH: surface.shapeFlipH, flipV: surface.shapeFlipV)
+            }
 
             if surface.isVideo {
                 HStack {

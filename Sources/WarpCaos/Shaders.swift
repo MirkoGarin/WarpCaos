@@ -31,7 +31,10 @@ enum Shaders {
         uint maskCount;
         uint shape;          // 0 = sin recorte (ver ShapeKind.shaderID)
         float shapeFeather;  // suavizado del borde, en unidades del cuadrado normalizado
-        float2 uvScale;      // ajuste "Cubrir": rango de UV muestreado del contenido
+        float2 uvM0;         // matriz 2x2 UV de superficie -> UV de textura (columnas): ajuste, rotación y volteo
+        float2 uvM1;
+        float2 shM0;         // matriz 2x2 de la forma (rotación y volteo)
+        float2 shM1;
     };
 
     struct MaskInfo {
@@ -109,13 +112,19 @@ enum Shaders {
                                   constant FragUniform &u [[buffer(0)]],
                                   constant float2 *maskPts [[buffer(1)]],
                                   constant MaskInfo *masks [[buffer(2)]]) {
-        float4 c = tex.sample(smp, (in.uv - 0.5) * u.uvScale + 0.5);
+        float2 t = float2x2(u.uvM0, u.uvM1) * (in.uv - 0.5) + 0.5;
+        float4 c = tex.sample(smp, t);
+        // Fuera de la textura (rotada o escalada) no hay contenido.
+        float2 fw = fwidth(t) + 1e-6;
+        float2 edge = smoothstep(-0.5 * fw, 0.5 * fw, t) * smoothstep(-0.5 * fw, 0.5 * fw, 1.0 - t);
+        c.a *= edge.x * edge.y;
 
         // Forma: recorte en UV, antes de las máscaras de pantalla.
         float shapeA = 1.0;
         if (u.shape != 0) {
             float2 q = (in.uv - 0.5) * 2.0;
             q.y = -q.y;
+            q = float2x2(u.shM0, u.shM1) * q;
             float sd = shapeSDF(q, u.shape);
             float hh = max(u.shapeFeather, fwidth(sd));
             shapeA = 1.0 - smoothstep(-hh, hh, sd);

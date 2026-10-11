@@ -78,6 +78,19 @@ final class AppState: ObservableObject {
             c.shapeFeather = 0.25; c.demoStyle = "r:0.7,0.1,0.95,0.9,0"
             surfaces = [a, b, c]
             selectedID = a.id
+        } else if demo == "transform" {
+            func panel(_ name: String, _ x0: Float) -> SurfaceModel {
+                var p = newSurface(); p.name = name; p.source = .pattern(.uv); p.cols = 2; p.rows = 2
+                p.demoStyle = "r:\(x0),0.22,\(x0 + 0.2),0.78,0"
+                return p
+            }
+            let a = panel("Original", 0.03)
+            var b = panel("Rotado 90", 0.26); b.contentRotation = 90
+            var c = panel("Volteo H", 0.49); c.contentFlipH = true
+            var d = panel("Triángulo", 0.72); d.shape = .triangle; d.fit = .cover
+            d.shapeFlipV = true; d.shapeRotation = 20
+            surfaces = [a, b, c, d]
+            selectedID = d.id
         } else if demo == "masks" {
             var s = newSurface()
             s.cols = 2; s.rows = 2; s.demoStyle = "r:0.15,0.08,0.85,0.92,0"
@@ -215,6 +228,54 @@ final class AppState: ObservableObject {
         guard let i = activeIndex else { return }
         registerUndo(coalesce: "shapefeather")
         surfaces[i].shapeFeather = v
+    }
+
+    enum TransformTarget { case content, shape }
+
+    private func wrapAngle(_ a: Float) -> Float {
+        var v = a.truncatingRemainder(dividingBy: 360)
+        if v > 180 { v -= 360 }
+        if v <= -180 { v += 360 }
+        return v
+    }
+
+    /// Gira el contenido o la forma `delta` grados (sentido horario).
+    func rotate(_ t: TransformTarget, by delta: Float) {
+        guard let i = activeIndex else { return }
+        registerUndo()
+        switch t {
+        case .content: surfaces[i].contentRotation = wrapAngle(surfaces[i].contentRotation + delta)
+        case .shape: surfaces[i].shapeRotation = wrapAngle(surfaces[i].shapeRotation + delta)
+        }
+    }
+
+    func setAngle(_ t: TransformTarget, _ v: Float) {
+        guard let i = activeIndex else { return }
+        registerUndo(coalesce: "angle-\(t)")
+        switch t {
+        case .content: surfaces[i].contentRotation = v
+        case .shape: surfaces[i].shapeRotation = v
+        }
+    }
+
+    func flip(_ t: TransformTarget, horizontal: Bool) {
+        guard let i = activeIndex else { return }
+        registerUndo()
+        switch (t, horizontal) {
+        case (.content, true): surfaces[i].contentFlipH.toggle()
+        case (.content, false): surfaces[i].contentFlipV.toggle()
+        case (.shape, true): surfaces[i].shapeFlipH.toggle()
+        case (.shape, false): surfaces[i].shapeFlipV.toggle()
+        }
+    }
+
+    func resetTransform(_ t: TransformTarget) {
+        guard let i = activeIndex else { return }
+        registerUndo()
+        switch t {
+        case .content: surfaces[i].contentRotation = 0; surfaces[i].contentFlipH = false; surfaces[i].contentFlipV = false
+        case .shape: surfaces[i].shapeRotation = 0; surfaces[i].shapeFlipH = false; surfaces[i].shapeFlipV = false
+        }
     }
 
     func setFit(_ f: FitMode) {

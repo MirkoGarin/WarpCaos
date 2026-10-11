@@ -16,6 +16,7 @@ Built with Swift, SwiftUI and Metal. It compiles with the Xcode Command Line Too
 - **Quad Warp** — a 2×2 mesh renders with exact perspective correction.
 - **Shaped surfaces** — circle/ellipse, triangle, diamond, pentagon, hexagon, octagon and star. A shape lives inside a 4-corner quad, so it follows the perspective and is easy to edit; raise the grid to bend it like a mesh. Optional soft edge.
 - **Masks** — polygon masks per surface with *Show / Hide*, *Invert* and feathered edges (exact distance-based, no blur passes).
+- **Flip & rotate** — flip horizontally/vertically and rotate (±90° steps or any angle) the content and, independently, the shape of each surface. Rotated shapes shrink automatically to stay inside their quad.
 - **Content** — images and video (looping, mute, rotation metadata respected) plus built-in calibration patterns: checkerboard, grid, UV, color bars, white.
 - **Multiple surfaces** — layers with order, opacity and visibility; each surface has its own content, grid and masks.
 - **Projector output** — borderless fullscreen on the chosen screen, **Blackout** and **Freeze**, `Esc` to close. The canvas takes the output screen's aspect ratio, and the display is kept awake while projecting.
@@ -131,6 +132,7 @@ Hecha con Swift, SwiftUI y Metal. Se compila con las Command Line Tools de Xcode
 - **Quad Warp** — una malla 2×2 se dibuja con corrección de perspectiva exacta.
 - **Superficies con forma** — círculo/elipse, triángulo, rombo, pentágono, hexágono, octágono y estrella. La forma vive dentro de un cuadrilátero de 4 esquinas, así que sigue la perspectiva y es fácil de editar; subiendo la grilla se deforma como una malla. Borde suave opcional.
 - **Máscaras** — máscaras poligonales por superficie con *Mostrar / Ocultar*, *Invertir* y bordes difuminados (por distancia exacta, sin pasadas de blur).
+- **Voltear y rotar** — voltear horizontal/verticalmente y rotar (de a 90° o con cualquier ángulo) el contenido y, por separado, la forma de cada superficie. Las formas rotadas se achican solas para seguir dentro del cuadrilátero.
 - **Contenido** — imágenes y video (con loop, silencio y rotación de metadatos respetada), más patrones de calibración: tablero, grilla, UV, barras de color y blanco.
 - **Varias superficies** — capas con orden, opacidad y visibilidad; cada superficie tiene su propio contenido, grilla y máscaras.
 - **Salida a proyector** — pantalla completa sin bordes en la pantalla elegida, **Negro** y **Congelar**, y `Esc` para cerrar. El lienzo toma la proporción de la pantalla de salida y se evita que la pantalla se apague mientras se proyecta.
