@@ -37,6 +37,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>LSApplicationCategoryType</key><string>public.app-category.graphics-design</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+<key>NSAppTransportSecurity</key><dict>
+  <key>NSAllowsArbitraryLoadsForMedia</key><true/>
+</dict>
 <key>CFBundleDocumentTypes</key><array><dict>
   <key>CFBundleTypeName</key><string>Proyecto WarpCaos</string>
   <key>CFBundleTypeRole</key><string>Editor</string>

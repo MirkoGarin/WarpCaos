@@ -109,6 +109,7 @@ final class AppState: ObservableObject {
             if demo == "quad" { s.cols = 2; s.rows = 2 }
             if demo == "mesh" || demo == "linear" { s.cols = 5; s.rows = 5 }
             if demo == "linear" { s.smooth = false }
+            if let link = env["WARPCAOS_URL"], let url = URL(string: link) { s.source = .url(url) }
             if let path = env["WARPCAOS_FILE"] {
                 let url = URL(fileURLWithPath: path)
                 if MediaKind.of(url) != nil { s.source = .file(url) }
@@ -357,6 +358,7 @@ final class AppState: ObservableObject {
     func useCalibration(_ p: Pattern) { setSource(.pattern(p)) }
 
     func open(url: URL) {
+        if !url.isFileURL { openRemote(url); return }
         guard MediaKind.of(url) != nil else {
             status = "Formato no soportado: \(url.lastPathComponent)"
             return
@@ -370,6 +372,38 @@ final class AppState: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.message = "Elegí una imagen o un video para la superficie activa"
         if panel.runModal() == .OK, let url = panel.url { open(url: url) }
+    }
+
+    /// Pide una URL y la asigna a la superficie activa.
+    func openURLPanel() {
+        let alert = NSAlert()
+        alert.messageText = "Abrir URL"
+        alert.informativeText = "Pegá un link directo a un video (.mp4, .mov, .m3u8) o a una imagen (.png, .jpg…). Se reproduce por streaming, sin descargarlo. Los links de páginas de YouTube o Vimeo no funcionan."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 440, height: 24))
+        field.placeholderString = "https://…/video.mp4"
+        if let clip = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           clip.hasPrefix("http") { field.stringValue = clip }
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Abrir")
+        alert.addButton(withTitle: "Cancelar")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: text), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+            status = "La URL no es válida (tiene que empezar con http:// o https://)"
+            return
+        }
+        openRemote(url)
+    }
+
+    func openRemote(_ url: URL) {
+        let host = (url.host ?? "").lowercased()
+        let pages = ["youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "instagram.com", "facebook.com"]
+        if pages.contains(where: { host == $0 || host.hasSuffix("." + $0) }) && !["mp4", "mov", "m3u8", "m4v"].contains(url.pathExtension.lowercased()) {
+            status = "Ese es un link de página, no de un archivo de video. Necesito un link directo (.mp4, .mov, .m3u8); descargá el video y abrilo como archivo."
+            return
+        }
+        setSource(.url(url))
     }
 
     private func setSource(_ s: Source) {
@@ -390,6 +424,11 @@ final class AppState: ObservableObject {
             surfaces[i].contentAspect = aspect
             if !surfaces[i].meshEdited { surfaces[i].mesh = nil }
         }
+    }
+
+    /// Quita el cartel «Cargando…» cuando llegó el primer frame del video o terminó la descarga de la imagen.
+    func finishedLoading() {
+        if status?.hasPrefix("Cargando") == true { status = nil }
     }
 
     func contentFailed(id: UUID, message: String) {

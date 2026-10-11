@@ -38,6 +38,8 @@ struct WarpCaosApp: App {
                 Divider()
                 Button("Abrir imagen o video…") { state.openPanel() }
                     .keyboardShortcut("o")
+                Button("Abrir URL…") { state.openURLPanel() }
+                    .keyboardShortcut("u", modifiers: [.command, .shift])
                 Divider()
                 Button("Nueva superficie") { state.addSurface() }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
@@ -272,6 +274,7 @@ struct InspectorView: View {
                 }
                 Divider()
                 Button("Abrir imagen o video…") { state.openPanel() }
+                Button("Abrir URL…") { state.openURLPanel() }
             } label: {
                 Text(surface.source.displayName).lineLimit(1)
             }

@@ -17,6 +17,7 @@ Built with Swift, SwiftUI and Metal. It compiles with the Xcode Command Line Too
 - **Shaped surfaces** — circle/ellipse, triangle, diamond, pentagon, hexagon, octagon and star. A shape lives inside a 4-corner quad, so it follows the perspective and is easy to edit; raise the grid to bend it like a mesh. Optional soft edge.
 - **Masks** — polygon masks per surface with *Show / Hide*, *Invert* and feathered edges (exact distance-based, no blur passes).
 - **Flip & rotate** — flip horizontally/vertically and rotate (±90° steps or any angle) the content and, independently, the shape of each surface. Rotated shapes shrink automatically to stay inside their quad.
+- **Open URL** — stream a video (`.mp4`, `.mov`, HLS `.m3u8`) or load an image from a direct link, without downloading it first. Page links (YouTube, Vimeo…) are not direct files and are rejected with an explanation.
 - **Content** — images and video (looping, mute, rotation metadata respected) plus built-in calibration patterns: checkerboard, grid, UV, color bars, white.
 - **Multiple surfaces** — layers with order, opacity and visibility; each surface has its own content, grid and masks.
 - **Projector output** — borderless fullscreen on the chosen screen, **Blackout** and **Freeze**, `Esc` to close. The canvas takes the output screen's aspect ratio, and the display is kept awake while projecting.
@@ -44,6 +45,7 @@ Built with Swift, SwiftUI and Metal. It compiles with the Xcode Command Line Too
 |---|---|
 | New / Open / Save / Save as | ⌘N / ⇧⌘O / ⌘S / ⇧⌘S |
 | Open image or video on the active surface | ⌘O (or drop a file on the window) |
+| Open a video or image URL | ⇧⌘U |
 | New / Duplicate / Delete surface | ⇧⌘N / ⌘D / ⌘⌫ |
 | Undo / Redo | ⌘Z / ⇧⌘Z |
 | Select all nodes | ⌘A |
@@ -98,6 +100,7 @@ Environment variables used for testing without the UI:
 |---|---|
 | `WARPCAOS_DEMO=mesh\|linear\|quad\|multi\|masks\|shapes` | Load a test scene (disables autosave) |
 | `WARPCAOS_FILE=<path>` | Initial media for the first surface |
+| `WARPCAOS_URL=<url>` | Initial video/image URL for the first surface (disables autosave) |
 | `WARPCAOS_PROJECT=<path>` | Open a project at launch |
 | `WARPCAOS_SAVE_TO=<path>` | Save the project after 3 s |
 | `WARPCAOS_OUTPUT=test\|screen` | Open the output window at launch |
@@ -106,7 +109,7 @@ Recovery copies are written to `~/Library/Application Support/WarpCaos/autosave.
 
 ### Status
 
-Version 1.1. Pre-built installers (`.dmg`) are available on the [Releases](https://github.com/MirkoGarin/WarpCaos/releases) page. Developed and tested on an Intel Mac with macOS 15; the Apple Silicon slice is built but has not been run on that hardware. Fullscreen output on external projectors depends on your display setup — use a direct wired connection (HDMI/DisplayPort) rather than AirPlay for accurate, low-latency mapping.
+Version 1.2. Pre-built installers (`.dmg`) are available on the [Releases](https://github.com/MirkoGarin/WarpCaos/releases) page. Developed and tested on an Intel Mac with macOS 15; the Apple Silicon slice is built but has not been run on that hardware. Fullscreen output on external projectors depends on your display setup — use a direct wired connection (HDMI/DisplayPort) rather than AirPlay for accurate, low-latency mapping.
 
 ### Credits
 
@@ -133,6 +136,7 @@ Hecha con Swift, SwiftUI y Metal. Se compila con las Command Line Tools de Xcode
 - **Superficies con forma** — círculo/elipse, triángulo, rombo, pentágono, hexágono, octágono y estrella. La forma vive dentro de un cuadrilátero de 4 esquinas, así que sigue la perspectiva y es fácil de editar; subiendo la grilla se deforma como una malla. Borde suave opcional.
 - **Máscaras** — máscaras poligonales por superficie con *Mostrar / Ocultar*, *Invertir* y bordes difuminados (por distancia exacta, sin pasadas de blur).
 - **Voltear y rotar** — voltear horizontal/verticalmente y rotar (de a 90° o con cualquier ángulo) el contenido y, por separado, la forma de cada superficie. Las formas rotadas se achican solas para seguir dentro del cuadrilátero.
+- **Abrir URL** — reproducí por streaming un video (`.mp4`, `.mov`, HLS `.m3u8`) o cargá una imagen desde un link directo, sin descargarlo antes. Los links de página (YouTube, Vimeo…) no son archivos directos y se rechazan con una explicación.
 - **Contenido** — imágenes y video (con loop, silencio y rotación de metadatos respetada), más patrones de calibración: tablero, grilla, UV, barras de color y blanco.
 - **Varias superficies** — capas con orden, opacidad y visibilidad; cada superficie tiene su propio contenido, grilla y máscaras.
 - **Salida a proyector** — pantalla completa sin bordes en la pantalla elegida, **Negro** y **Congelar**, y `Esc` para cerrar. El lienzo toma la proporción de la pantalla de salida y se evita que la pantalla se apague mientras se proyecta.
@@ -160,6 +164,7 @@ Hecha con Swift, SwiftUI y Metal. Se compila con las Command Line Tools de Xcode
 |---|---|
 | Nuevo / Abrir / Guardar / Guardar como | ⌘N / ⇧⌘O / ⌘S / ⇧⌘S |
 | Abrir imagen o video en la superficie activa | ⌘O (o soltar el archivo en la ventana) |
+| Abrir la URL de un video o imagen | ⇧⌘U |
 | Nueva / Duplicar / Eliminar superficie | ⇧⌘N / ⌘D / ⌘⌫ |
 | Deshacer / Rehacer | ⌘Z / ⇧⌘Z |
 | Seleccionar todos los nodos | ⌘A |
@@ -214,6 +219,7 @@ Variables de entorno para probar sin usar la interfaz:
 |---|---|
 | `WARPCAOS_DEMO=mesh\|linear\|quad\|multi\|masks\|shapes` | Carga una escena de prueba (desactiva el autosave) |
 | `WARPCAOS_FILE=<ruta>` | Media inicial de la primera superficie |
+| `WARPCAOS_URL=<url>` | URL de video o imagen inicial de la primera superficie (desactiva el autosave) |
 | `WARPCAOS_PROJECT=<ruta>` | Abre un proyecto al iniciar |
 | `WARPCAOS_SAVE_TO=<ruta>` | Guarda el proyecto a los 3 s |
 | `WARPCAOS_OUTPUT=test\|screen` | Abre la ventana de salida al iniciar |
@@ -222,7 +228,7 @@ Las copias de recuperación se escriben en `~/Library/Application Support/WarpCa
 
 ### Estado
 
-Versión 1.1. Los instaladores ya compilados (`.dmg`) están en la página de [Releases](https://github.com/MirkoGarin/WarpCaos/releases). Desarrollada y probada en una Mac Intel con macOS 15; la versión para Apple Silicon se compila pero no se ejecutó en ese hardware. La salida a pantalla completa en proyectores externos depende de tu configuración: usá una conexión directa por cable (HDMI/DisplayPort) y no AirPlay para un mapeo preciso y de baja latencia.
+Versión 1.2. Los instaladores ya compilados (`.dmg`) están en la página de [Releases](https://github.com/MirkoGarin/WarpCaos/releases). Desarrollada y probada en una Mac Intel con macOS 15; la versión para Apple Silicon se compila pero no se ejecutó en ese hardware. La salida a pantalla completa en proyectores externos depende de tu configuración: usá una conexión directa por cable (HDMI/DisplayPort) y no AirPlay para un mapeo preciso y de baja latencia.
 
 ### Créditos
 

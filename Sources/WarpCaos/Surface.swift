@@ -4,11 +4,16 @@ import simd
 enum Source: Equatable {
     case pattern(Pattern)
     case file(URL)
+    /// Video (mp4, mov, HLS…) o imagen alojados en la red, reproducidos o descargados sin guardarlos como archivo.
+    case url(URL)
 
     var displayName: String {
         switch self {
         case .pattern(let p): return "Patrón: \(p.rawValue)"
         case .file(let url): return url.lastPathComponent
+        case .url(let url):
+            let name = url.lastPathComponent
+            return "URL: \(url.host ?? "")" + (name.isEmpty || name == "/" ? "" : "/…/\(name)")
         }
     }
 }

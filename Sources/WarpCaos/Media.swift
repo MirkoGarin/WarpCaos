@@ -22,8 +22,19 @@ final class VideoSource {
         let item = AVPlayerItem(asset: asset)
         // Videos grabados con celular traen la rotación como transformación del track: sin una
         // composición, AVPlayerItemVideoOutput entregaría los frames sin rotar.
-        if let track = asset.tracks(withMediaType: .video).first, !track.preferredTransform.isIdentity {
-            item.videoComposition = AVMutableVideoComposition(propertiesOf: asset)
+        if url.isFileURL {
+            if let track = asset.tracks(withMediaType: .video).first, !track.preferredTransform.isIdentity {
+                item.videoComposition = AVMutableVideoComposition(propertiesOf: asset)
+            }
+        } else {
+            // En la red se resuelve sin bloquear: la composición se aplica cuando el track está disponible.
+            Task { @MainActor in
+                if let track = try? await asset.loadTracks(withMediaType: .video).first,
+                   let t = try? await track.load(.preferredTransform), !t.isIdentity,
+                   let comp = try? await AVMutableVideoComposition.videoComposition(withPropertiesOf: asset) {
+                    item.videoComposition = comp
+                }
+            }
         }
         item.add(output)
         player = AVPlayer(playerItem: item)
@@ -32,6 +43,16 @@ final class VideoSource {
             self?.player.seek(to: .zero)
             self?.player.play()
         }
+    }
+
+    /// Mensaje de error si el video no pudo abrirse o se cortó (red caída, formato no soportado…).
+    var errorMessage: String? {
+        guard let item = player.currentItem, item.status == .failed else { return nil }
+        guard let error = item.error as NSError? else { return "error desconocido" }
+        // -11850 "Operation Stopped": típico cuando el servidor no permite pedir el archivo por rangos.
+        if error.code == -11850 { return "el servidor no permite streaming de ese archivo (¿es un link directo al video? probá con .m3u8 o descargalo)" }
+        if error.domain == NSURLErrorDomain { return "no se pudo conectar (\(error.localizedDescription))" }
+        return error.localizedDescription
     }
 
     deinit {
@@ -59,6 +80,12 @@ final class VideoSource {
 
 enum MediaKind {
     case image, video
+
+    /// Para una URL de red: se asume video salvo que la extensión sea de imagen (cubre mp4, mov, m3u8 y enlaces sin extensión).
+    static func forRemote(_ url: URL) -> MediaKind {
+        let ext = url.pathExtension.lowercased()
+        return ["png", "jpg", "jpeg", "heic", "gif", "tif", "tiff", "bmp", "webp"].contains(ext) ? .image : .video
+    }
 
     static func of(_ url: URL) -> MediaKind? {
         guard let type = UTType(filenameExtension: url.pathExtension.lowercased()) else { return nil }

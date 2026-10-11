@@ -9,12 +9,16 @@ extension CodingUserInfoKey {
 /// Las rutas de media se guardan absolutas y relativas a la carpeta del proyecto,
 /// para poder mover proyecto + media juntos a otra máquina.
 extension Source: Codable {
-    private enum CodingKeys: String, CodingKey { case pattern, path, relative }
+    private enum CodingKeys: String, CodingKey { case pattern, path, relative, url }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         if let p = try c.decodeIfPresent(Pattern.self, forKey: .pattern) {
             self = .pattern(p)
+            return
+        }
+        if let remote = try c.decodeIfPresent(URL.self, forKey: .url) {
+            self = .url(remote)
             return
         }
         let path = try c.decode(String.self, forKey: .path)
@@ -33,6 +37,8 @@ extension Source: Codable {
         switch self {
         case .pattern(let p):
             try c.encode(p, forKey: .pattern)
+        case .url(let url):
+            try c.encode(url, forKey: .url)
         case .file(let url):
             try c.encode(url.path, forKey: .path)
             if let dir = encoder.userInfo[.projectDir] as? URL {
@@ -147,7 +153,7 @@ extension AppState {
 
     /// Guarda una copia de recuperación 2 s después del último cambio y la restaura al abrir.
     func configurePersistence(env: [String: String], demo: String?) {
-        let testing = demo != nil || env["WARPCAOS_FILE"] != nil
+        let testing = demo != nil || env["WARPCAOS_FILE"] != nil || env["WARPCAOS_URL"] != nil
         if let path = env["WARPCAOS_PROJECT"] {
             load(from: URL(fileURLWithPath: path))
         } else if !testing, let data = try? Data(contentsOf: Self.autosaveURL) {

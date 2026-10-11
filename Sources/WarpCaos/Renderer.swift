@@ -27,6 +27,7 @@ private final class Resources {
     var texture: MTLTexture?
     var video: VideoSource?
     var sizeReported = false
+    var failureReported = false
     var wasPlaying = true
     var revision = -1
     var vertexBuffer: MTLBuffer?
@@ -230,11 +231,17 @@ final class Renderer: NSObject, MTKViewDelegate {
         if r.source != s.source { loadSource(r, s) }
         guard let video = r.video else { return }
 
+        if let msg = video.errorMessage, !r.failureReported {
+            r.failureReported = true
+            state.contentFailed(id: s.id, message: "No se pudo reproducir el video: \(msg)")
+            return
+        }
         if video.update(), let t = video.texture {
             r.texture = t
             if !r.sizeReported {
                 r.sizeReported = true
                 state.contentLoaded(id: s.id, aspect: Float(t.width) / Float(t.height), isVideo: true)
+                state.finishedLoading()
             }
         }
         if s.playing != r.wasPlaying {
@@ -248,6 +255,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         r.source = s.source
         r.video = nil
         r.sizeReported = false
+        r.failureReported = false
 
         switch s.source {
         case .pattern(let p):
@@ -269,20 +277,60 @@ final class Renderer: NSObject, MTKViewDelegate {
                     state.contentFailed(id: s.id, message: "No se pudo abrir la imagen: \(error.localizedDescription)")
                 }
             case .video:
-                guard let v = VideoSource(url: url, device: device) else {
-                    state.contentFailed(id: s.id, message: "No se pudo abrir el video")
-                    return
-                }
-                r.video = v
-                r.texture = nil
-                r.wasPlaying = s.playing
-                v.player.isMuted = s.muted
-                if s.playing { v.player.play() }
-                state.contentLoaded(id: s.id, aspect: s.contentAspect, isVideo: true)
+                startVideo(r, s, url)
             case nil:
                 state.contentFailed(id: s.id, message: "Formato no soportado")
             }
+
+        case .url(let url):
+            state.status = "Cargando \(url.host ?? "URL")…"
+            switch MediaKind.forRemote(url) {
+            case .video: startVideo(r, s, url)
+            case .image: loadRemoteImage(r, s, url)
+            }
         }
+    }
+
+    private func startVideo(_ r: Resources, _ s: SurfaceModel, _ url: URL) {
+        guard let v = VideoSource(url: url, device: device) else {
+            state.contentFailed(id: s.id, message: "No se pudo abrir el video")
+            return
+        }
+        r.video = v
+        r.texture = nil
+        r.wasPlaying = s.playing
+        v.player.isMuted = s.muted
+        if s.playing { v.player.play() }
+        state.contentLoaded(id: s.id, aspect: s.contentAspect, isVideo: true)
+    }
+
+    /// Descarga la imagen en segundo plano; si mientras tanto cambió la fuente de la superficie, se descarta.
+    private func loadRemoteImage(_ r: Resources, _ s: SurfaceModel, _ url: URL) {
+        r.texture = nil
+        let id = s.id, source = s.source
+        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self, let r = self.resources[id], r.source == source else { return }
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 200
+                guard let data, error == nil, code < 400 else {
+                    let why = error?.localizedDescription ?? "HTTP \(code)"
+                    self.state.contentFailed(id: id, message: "No se pudo descargar la imagen: \(why)")
+                    return
+                }
+                do {
+                    let t = try self.textureLoader.newTexture(data: data, options: [
+                        .SRGB: false,
+                        .origin: MTKTextureLoader.Origin.topLeft,
+                        .generateMipmaps: true,
+                    ])
+                    r.texture = t
+                    self.state.contentLoaded(id: id, aspect: Float(t.width) / Float(t.height), isVideo: false)
+                    self.state.finishedLoading()
+                } catch {
+                    self.state.contentFailed(id: id, message: "La URL no es una imagen válida: \(error.localizedDescription)")
+                }
+            }
+        }.resume()
     }
 
     // MARK: Overlay
