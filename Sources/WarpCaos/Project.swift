@@ -9,12 +9,16 @@ extension CodingUserInfoKey {
 /// Las rutas de media se guardan absolutas y relativas a la carpeta del proyecto,
 /// para poder mover proyecto + media juntos a otra máquina.
 extension Source: Codable {
-    private enum CodingKeys: String, CodingKey { case pattern, path, relative, url }
+    private enum CodingKeys: String, CodingKey { case pattern, path, relative, url, page }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         if let p = try c.decodeIfPresent(Pattern.self, forKey: .pattern) {
             self = .pattern(p)
+            return
+        }
+        if let page = try c.decodeIfPresent(URL.self, forKey: .page) {
+            self = .page(page)
             return
         }
         if let remote = try c.decodeIfPresent(URL.self, forKey: .url) {
@@ -37,6 +41,8 @@ extension Source: Codable {
         switch self {
         case .pattern(let p):
             try c.encode(p, forKey: .pattern)
+        case .page(let url):
+            try c.encode(url, forKey: .page)
         case .url(let url):
             try c.encode(url, forKey: .url)
         case .file(let url):
@@ -181,7 +187,27 @@ extension AppState {
     private func autosave() {
         let url = Self.autosaveURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        Self.backupPreviousAutosave(url)
         if let data = try? projectData(baseDir: nil) { try? data.write(to: url, options: .atomic) }
+    }
+
+    /// Antes de pisar el autosave se conserva la versión anterior en `backups/` (como mucho una cada 10 minutos,
+    /// las últimas 10). Así un «Nuevo proyecto» o un cambio por error no destruye el trabajo previo.
+    static func backupPreviousAutosave(_ url: URL, minInterval: TimeInterval = 600, keep: Int = 10) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path) else { return }
+        let dir = url.deletingLastPathComponent().appendingPathComponent("backups")
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let keys: [URLResourceKey] = [.contentModificationDateKey]
+        let existing = ((try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys)) ?? [])
+            .filter { $0.pathExtension == "mapproj" }
+            .map { ($0, (try? $0.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast) }
+            .sorted { $0.1 > $1.1 }
+        if let newest = existing.first, Date().timeIntervalSince(newest.1) < minInterval { return }
+        let f = DateFormatter()
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        try? fm.copyItem(at: url, to: dir.appendingPathComponent("autosave-\(f.string(from: Date())).mapproj"))
+        for old in existing.dropFirst(keep - 1) { try? fm.removeItem(at: old.0) }
     }
 
     // MARK: Lienzo y salida

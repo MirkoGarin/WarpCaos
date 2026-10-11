@@ -28,6 +28,8 @@ private final class Resources {
     var video: VideoSource?
     var sizeReported = false
     var failureReported = false
+    var readyAt: Date?
+    var retries = 0
     var wasPlaying = true
     var revision = -1
     var vertexBuffer: MTLBuffer?
@@ -232,14 +234,31 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard let video = r.video else { return }
 
         if let msg = video.errorMessage, !r.failureReported {
+            // Las URL de stream de una página vencen: se vuelve a resolver (hasta 3 veces seguidas) antes de rendirse.
+            if case .page = s.source, r.retries < 3 {
+                r.retries += 1
+                loadSource(r, s)
+                return
+            }
             r.failureReported = true
             state.contentFailed(id: s.id, message: "No se pudo reproducir el video: \(msg)")
             return
+        }
+        // Video "listo" que no entrega imágenes: casi siempre un códec que AVFoundation no decodifica.
+        if s.playing, video.isReady, !r.sizeReported, !r.failureReported {
+            let since = r.readyAt ?? Date()
+            r.readyAt = since
+            if Date().timeIntervalSince(since) > 3 {
+                r.failureReported = true
+                state.contentFailed(id: s.id, message: "El video no entrega imágenes: probablemente usa un códec no compatible. Convertilo a H.264 (MP4), por ejemplo con ffmpeg.")
+                return
+            }
         }
         if video.update(), let t = video.texture {
             r.texture = t
             if !r.sizeReported {
                 r.sizeReported = true
+                r.retries = 0
                 state.contentLoaded(id: s.id, aspect: Float(t.width) / Float(t.height), isVideo: true)
                 state.finishedLoading()
             }
@@ -256,6 +275,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         r.video = nil
         r.sizeReported = false
         r.failureReported = false
+        r.readyAt = nil
 
         switch s.source {
         case .pattern(let p):
@@ -280,6 +300,28 @@ final class Renderer: NSObject, MTKViewDelegate {
                 startVideo(r, s, url)
             case nil:
                 state.contentFailed(id: s.id, message: "Formato no soportado")
+            }
+
+        case .page(let page):
+            r.texture = nil
+            state.status = "Resolviendo \(page.host ?? "link")…"
+            let id = s.id, source = s.source
+            PageResolver.resolve(page) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self, let r = self.resources[id], r.source == source,
+                          let current = self.state.surfaces.first(where: { $0.id == id }) else { return }
+                    switch result {
+                    case .success(let resolved):
+                        self.state.status = "Cargando «\(resolved.title)»…"
+                        self.startVideo(r, current, resolved.stream)
+                    case .failure(.notInstalled):
+                        self.state.contentFailed(id: id, message: "Para abrir links de YouTube o Vimeo hace falta yt-dlp. Instalalo con «brew install yt-dlp» y volvé a intentar.")
+                    case .failure(.blocked(let site)):
+                        self.state.contentFailed(id: id, message: "\(site) bloquea el streaming a reproductores externos. Descargalo con «yt-dlp -f b[ext=mp4] <link>» y abrilo como archivo.")
+                    case .failure(.failed(let why)):
+                        self.state.contentFailed(id: id, message: "No se pudo resolver el link: \(why)")
+                    }
+                }
             }
 
         case .url(let url):

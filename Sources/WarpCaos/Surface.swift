@@ -6,11 +6,14 @@ enum Source: Equatable {
     case file(URL)
     /// Video (mp4, mov, HLS…) o imagen alojados en la red, reproducidos o descargados sin guardarlos como archivo.
     case url(URL)
+    /// Link de una página de video (YouTube, Vimeo…): se resuelve a un stream con yt-dlp al cargarlo.
+    case page(URL)
 
     var displayName: String {
         switch self {
         case .pattern(let p): return "Patrón: \(p.rawValue)"
         case .file(let url): return url.lastPathComponent
+        case .page(let url): return "Página: \(url.host ?? "")"
         case .url(let url):
             let name = url.lastPathComponent
             return "URL: \(url.host ?? "")" + (name.isEmpty || name == "/" ? "" : "/…/\(name)")

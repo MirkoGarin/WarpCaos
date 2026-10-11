@@ -109,7 +109,7 @@ final class AppState: ObservableObject {
             if demo == "quad" { s.cols = 2; s.rows = 2 }
             if demo == "mesh" || demo == "linear" { s.cols = 5; s.rows = 5 }
             if demo == "linear" { s.smooth = false }
-            if let link = env["WARPCAOS_URL"], let url = URL(string: link) { s.source = .url(url) }
+            if let link = env["WARPCAOS_URL"], let url = URL(string: link) { s.source = PageResolver.source(for: url) }
             if let path = env["WARPCAOS_FILE"] {
                 let url = URL(fileURLWithPath: path)
                 if MediaKind.of(url) != nil { s.source = .file(url) }
@@ -378,7 +378,7 @@ final class AppState: ObservableObject {
     func openURLPanel() {
         let alert = NSAlert()
         alert.messageText = "Abrir URL"
-        alert.informativeText = "Pegá un link directo a un video (.mp4, .mov, .m3u8) o a una imagen (.png, .jpg…). Se reproduce por streaming, sin descargarlo. Los links de páginas de YouTube o Vimeo no funcionan."
+        alert.informativeText = "Pegá un link directo a un video (.mp4, .mov, .m3u8) o a una imagen (.png, .jpg…), o el link de una página de YouTube o Vimeo (requiere yt-dlp). Se reproduce por streaming, sin descargarlo."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 440, height: 24))
         field.placeholderString = "https://…/video.mp4"
         if let clip = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -396,14 +396,9 @@ final class AppState: ObservableObject {
         openRemote(url)
     }
 
+    /// Links de página (YouTube, Vimeo…) se resuelven a un stream con yt-dlp; el resto se reproduce directo.
     func openRemote(_ url: URL) {
-        let host = (url.host ?? "").lowercased()
-        let pages = ["youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "instagram.com", "facebook.com"]
-        if pages.contains(where: { host == $0 || host.hasSuffix("." + $0) }) && !["mp4", "mov", "m3u8", "m4v"].contains(url.pathExtension.lowercased()) {
-            status = "Ese es un link de página, no de un archivo de video. Necesito un link directo (.mp4, .mov, .m3u8); descargá el video y abrilo como archivo."
-            return
-        }
-        setSource(.url(url))
+        setSource(PageResolver.source(for: url))
     }
 
     private func setSource(_ s: Source) {

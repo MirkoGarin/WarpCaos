@@ -45,6 +45,9 @@ final class VideoSource {
         }
     }
 
+    /// El reproductor terminó de preparar el video (puede reproducirse).
+    var isReady: Bool { player.currentItem?.status == .readyToPlay }
+
     /// Mensaje de error si el video no pudo abrirse o se cortó (red caída, formato no soportado…).
     var errorMessage: String? {
         guard let item = player.currentItem, item.status == .failed else { return nil }
