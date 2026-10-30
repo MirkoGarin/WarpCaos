@@ -39,6 +39,12 @@ enum Shaders {
         float2 uv2M1;
         float mixAmount;     // 0 = solo el contenido 1; 1 = solo el contenido 2
         float pad;
+        float2 view0;        // porción de la textura que se ve (1,1 = toda); menor que 1 = texto que se desplaza
+        float2 scroll0;      // desplazamiento animado dentro de la textura (con muestreo repetido)
+        float2 view1;
+        float2 scroll1;
+        float alpha0;        // modulación de opacidad por contenido (parpadeo, pulso)
+        float alpha1;
     };
 
     struct MaskInfo {
@@ -111,12 +117,17 @@ enum Shaders {
     }
 
     // Muestrea un contenido aplicando su matriz UV; fuera de la textura (rotada o escalada) queda transparente.
-    float4 sampleContent(texture2d<float> tex, sampler smp, float2 uv, float2 m0, float2 m1) {
-        float2 t = float2x2(m0, m1) * (uv - 0.5) + 0.5;
-        float4 c = tex.sample(smp, t);
-        float2 fw = fwidth(t) + 1e-6;
-        float2 edge = smoothstep(-0.5 * fw, 0.5 * fw, t) * smoothstep(-0.5 * fw, 0.5 * fw, 1.0 - t);
-        c.a *= edge.x * edge.y;
+    // `view` < 1 muestra solo una ventana de la textura y `scroll` la desplaza (texto en movimiento, textura repetida).
+    float4 sampleContent(texture2d<float> tex, sampler smp, sampler smpRepeat, float2 uv,
+                         float2 m0, float2 m1, float2 view, float2 scroll) {
+        float2 t0 = float2x2(m0, m1) * (uv - 0.5) + 0.5;
+        float2 t = (t0 - 0.5) * view + 0.5 + scroll;
+        bool rx = view.x < 0.9999;
+        bool ry = view.y < 0.9999;
+        float4 c = (rx || ry) ? tex.sample(smpRepeat, t) : tex.sample(smp, t);
+        float2 fw = fwidth(t0) + 1e-6;
+        float2 edge = smoothstep(-0.5 * fw, 0.5 * fw, t0) * smoothstep(-0.5 * fw, 0.5 * fw, 1.0 - t0);
+        c.a *= (rx ? 1.0 : edge.x) * (ry ? 1.0 : edge.y);
         return c;
     }
 
@@ -124,12 +135,15 @@ enum Shaders {
                                   texture2d<float> tex [[texture(0)]],
                                   texture2d<float> tex2 [[texture(1)]],
                                   sampler smp [[sampler(0)]],
+                                  sampler smpRepeat [[sampler(1)]],
                                   constant FragUniform &u [[buffer(0)]],
                                   constant float2 *maskPts [[buffer(1)]],
                                   constant MaskInfo *masks [[buffer(2)]]) {
-        float4 c = sampleContent(tex, smp, in.uv, u.uvM0, u.uvM1);
+        float4 c = sampleContent(tex, smp, smpRepeat, in.uv, u.uvM0, u.uvM1, u.view0, u.scroll0);
+        c.a *= u.alpha0;
         if (u.mixAmount > 0.0) {   // uniforme por dibujo: el control de flujo es uniforme
-            float4 c2 = sampleContent(tex2, smp, in.uv, u.uv2M0, u.uv2M1);
+            float4 c2 = sampleContent(tex2, smp, smpRepeat, in.uv, u.uv2M0, u.uv2M1, u.view1, u.scroll1);
+            c2.a *= u.alpha1;
             c = mix(c, c2, u.mixAmount);
         }
 

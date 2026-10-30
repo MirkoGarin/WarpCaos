@@ -422,6 +422,8 @@ struct ContentSection: View {
                     Button(p.rawValue) { state.useCalibration(p) }
                 }
                 Divider()
+                Button("Texto") { state.useText() }
+                Divider()
                 Button("Abrir imagen o video…") { state.openPanel() }
                 Button("Abrir URL…") { state.openURLPanel() }
             } label: {
@@ -431,6 +433,20 @@ struct ContentSection: View {
         }
 
         PlaylistView(state: state, surface: surface)
+
+        let items = surface.items
+        if items.count == 1, case .text(let spec) = items[0] {
+            TextEditorPanel(state: state, index: 0, spec: spec)
+        } else {
+            ForEach(Array(items.enumerated()), id: \.offset) { idx, src in
+                if case .text(let spec) = src {
+                    DisclosureGroup("Texto \(idx + 1): \(spec.summary)") {
+                        TextEditorPanel(state: state, index: idx, spec: spec).padding(.top, 6)
+                    }
+                    .font(.subheadline)
+                }
+            }
+        }
 
         FieldRow("Ajuste") {
             Picker("", selection: Binding(get: { surface.fit }, set: { state.setFit($0) })) {
@@ -553,6 +569,7 @@ struct PlaylistView: View {
                 Menu {
                     Button("Archivos…") { state.addItemFilesPanel() }
                     Button("URL…") { state.openURLPanel(append: true) }
+                    Button("Texto") { state.addItemText() }
                     Divider()
                     ForEach(Pattern.allCases) { p in
                         Button("Patrón: \(p.rawValue)") { state.addItemPatterns(p) }
@@ -722,6 +739,159 @@ struct MasksView: View {
                 Text("«+» crea un polígono sobre la superficie para mostrar u ocultar partes.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+
+// MARK: - Editor de texto
+
+/// Editor del contenido «Texto»: qué dice, cómo se ve y cómo se mueve.
+struct TextEditorPanel: View {
+    @ObservedObject var state: AppState
+    let index: Int
+    let spec: TextSpec
+
+    private static let families = TextRenderer.availableFamilies
+    private static let aspects: [(String, Float)] = [
+        ("16:9", 16.0 / 9), ("16:10", 16.0 / 10), ("4:3", 4.0 / 3), ("21:9", 21.0 / 9),
+        ("1:1", 1), ("9:16", 9.0 / 16), ("4:1 cartel", 4), ("8:1 cartel largo", 8), ("1:4 vertical", 0.25),
+    ]
+
+    private func set(_ change: @escaping (inout TextSpec) -> Void) { state.updateText(at: index, change) }
+
+    private func color(_ kp: WritableKeyPath<TextSpec, RGBA>) -> Binding<Color> {
+        Binding(
+            get: {
+                let c = spec[keyPath: kp]
+                return Color(.sRGB, red: Double(c.r), green: Double(c.g), blue: Double(c.b), opacity: Double(c.a))
+            },
+            set: { new in set { $0[keyPath: kp] = RGBA(NSColor(new)) } })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextEditor(text: Binding(get: { spec.text }, set: { v in set { $0.text = v } }))
+                .font(.system(size: 13))
+                .frame(height: 72)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.4)))
+                .help("Escribí el texto que se proyecta. Los saltos de línea se respetan.")
+
+            appearance
+            colors
+            movement
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+    }
+
+    private var appearance: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FieldRow("Tipografía") {
+                Picker("", selection: Binding(get: { spec.fontName }, set: { v in set { $0.fontName = v } })) {
+                    if !Self.families.contains(spec.fontName) { Text(spec.fontName).tag(spec.fontName) }
+                    ForEach(Self.families, id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden()
+                .help("Tipografía: cualquiera de las instaladas en tu Mac")
+            }
+            FieldRow("Estilo") {
+                HStack(spacing: 8) {
+                    Toggle(isOn: Binding(get: { spec.bold }, set: { v in set { $0.bold = v } })) {
+                        Image(systemName: "bold").frame(width: 14)
+                    }
+                    .toggleStyle(.button).help("Negrita").accessibilityLabel("Negrita")
+                    Toggle(isOn: Binding(get: { spec.italic }, set: { v in set { $0.italic = v } })) {
+                        Image(systemName: "italic").frame(width: 14)
+                    }
+                    .toggleStyle(.button).help("Cursiva").accessibilityLabel("Cursiva")
+                    Picker("", selection: Binding(get: { spec.align }, set: { v in set { $0.align = v } })) {
+                        Image(systemName: "text.alignleft").tag(TextAlign.left)
+                        Image(systemName: "text.aligncenter").tag(TextAlign.center)
+                        Image(systemName: "text.alignright").tag(TextAlign.right)
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                    .help("Alineación del texto: izquierda, centro o derecha")
+                }
+            }
+            FieldRow("Tamaño") {
+                HStack(spacing: 6) {
+                    Toggle("Auto", isOn: Binding(get: { spec.autoFit }, set: { v in set { $0.autoFit = v } }))
+                        .help("Ajusta el tamaño de letra al cuadro (en los modos de desplazamiento, a un tamaño legible)")
+                    Slider(value: Binding(get: { Double(spec.sizePercent) }, set: { v in set { $0.sizePercent = Float(v) } }), in: 3...90)
+                        .disabled(spec.autoFit)
+                        .help("Tamaño de letra como porcentaje de la altura del cuadro")
+                    Text("\(Int(spec.sizePercent))%").font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 34)
+                }
+            }
+            FieldRow("Interlineado") {
+                ValueSlider(value: Binding(get: { Double(spec.lineSpacing) }, set: { v in set { $0.lineSpacing = Float(v) } }),
+                            range: 0...1, text: String(format: "%.2f", spec.lineSpacing))
+                    .help("Espacio extra entre líneas")
+            }
+            FieldRow("Cuadro") {
+                Picker("", selection: Binding(get: { spec.aspect }, set: { v in set { $0.aspect = v } })) {
+                    if !Self.aspects.contains(where: { abs($0.1 - spec.aspect) < 0.01 }) {
+                        Text(String(format: "%.2f:1", spec.aspect)).tag(spec.aspect)
+                    }
+                    ForEach(Self.aspects, id: \.0) { Text($0.0).tag($0.1) }
+                }
+                .labelsHidden()
+                .help("Proporción del cuadro del texto. La superficie toma esta proporción; un cartel largo (4:1 u 8:1) es ideal para desplazar.")
+            }
+        }
+    }
+
+    private var colors: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FieldRow("Color") {
+                HStack {
+                    ColorPicker("", selection: color(\.color), supportsOpacity: true).labelsHidden()
+                        .help("Color del texto")
+                    Spacer(minLength: 0)
+                }
+            }
+            FieldRow("Fondo") {
+                HStack(spacing: 8) {
+                    ColorPicker("", selection: color(\.background), supportsOpacity: true).labelsHidden()
+                        .help("Color de fondo del cuadro. Con transparencia total (por defecto) el texto flota sobre las otras capas.")
+                    Button("Transparente") { set { $0.background = .clear } }
+                        .controlSize(.small)
+                        .disabled(spec.background.a == 0)
+                        .help("Quitar el fondo: el texto flota sobre las otras capas")
+                    Spacer(minLength: 0)
+                }
+            }
+            FieldRow("Contorno") {
+                HStack(spacing: 6) {
+                    ValueSlider(value: Binding(get: { Double(spec.outline) }, set: { v in set { $0.outline = Float(v) } }),
+                                range: 0...15, text: spec.outline < 0.5 ? "no" : String(format: "%.0f", spec.outline))
+                        .help("Grosor del contorno de las letras (0 = sin contorno)")
+                    ColorPicker("", selection: color(\.outlineColor), supportsOpacity: false).labelsHidden()
+                        .help("Color del contorno")
+                }
+            }
+        }
+    }
+
+    private var movement: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FieldRow("Movimiento") {
+                Picker("", selection: Binding(get: { spec.mode }, set: { m in set { $0.mode = m; $0.speed = m.defaultSpeed } })) {
+                    ForEach(TextMode.allCases) { Text($0.label).tag($0) }
+                }
+                .labelsHidden()
+                .help("Cómo se mueve el texto: fijo, desplazamiento en las cuatro direcciones, parpadeo, pulso o máquina de escribir")
+            }
+            if spec.mode != .still {
+                FieldRow("Velocidad") {
+                    ValueSlider(value: Binding(get: { Double(spec.speed) }, set: { v in set { $0.speed = Float(v) } }),
+                                range: spec.mode.speedRange,
+                                text: spec.mode == .typewriter ? String(format: "%.0f", spec.speed) : String(format: "%.2f", spec.speed))
+                        .help(spec.mode.speedLabel)
+                }
+                Text(spec.mode.speedLabel).font(.caption2).foregroundStyle(.secondary)
             }
         }
     }

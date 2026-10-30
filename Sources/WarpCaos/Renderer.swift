@@ -17,6 +17,12 @@ private struct FragUniform {
     var uv2M1: SIMD2<Float>
     var mixAmount: Float
     var pad: Float
+    var view0: SIMD2<Float>
+    var scroll0: SIMD2<Float>
+    var view1: SIMD2<Float>
+    var scroll1: SIMD2<Float>
+    var alpha0: Float
+    var alpha1: Float
 }
 
 private struct MaskInfo {
@@ -28,7 +34,7 @@ private struct MaskInfo {
 
 /// Un contenido cargado (patrón, imagen o video) listo para dibujarse. Cada elemento de la lista de una superficie tiene el suyo.
 private final class MediaSlot {
-    let source: Source
+    var source: Source
     var texture: MTLTexture?
     var video: VideoSource?
     var aspect: Float = 1
@@ -47,6 +53,10 @@ private final class MediaSlot {
     var loadToken = 0
     /// Posición de este contenido en `items` de la superficie.
     var index = 0
+    /// Texto: tamaño de la textura y de la ventana visible (si es menor, el texto se desplaza).
+    var textLayout: (width: Int, height: Int, boxW: Int, boxH: Int)?
+    var typeVisible = -1
+    var lastTextRender: Double = 0
 
     init(source: Source) { self.source = source }
 }
@@ -87,6 +97,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var meshPipeline: MTLRenderPipelineState?
     private var overlayPipeline: MTLRenderPipelineState?
     private var sampler: MTLSamplerState?
+    private var repeatSampler: MTLSamplerState?
     private let textureLoader: MTKTextureLoader
     private var resources: [UUID: Resources] = [:]
 
@@ -136,6 +147,9 @@ final class Renderer: NSObject, MTKViewDelegate {
             s.mipFilter = .linear
             s.maxAnisotropy = 8
             sampler = device.makeSamplerState(descriptor: s)
+            s.sAddressMode = .repeat   // textura repetida: el texto en desplazamiento da la vuelta
+            s.tAddressMode = .repeat
+            repeatSampler = device.makeSamplerState(descriptor: s)
         } catch {
             fatalError("Error compilando shaders: \(error)")
         }
@@ -223,6 +237,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         // Superficies de abajo hacia arriba.
         enc.setRenderPipelineState(meshPipeline)
         enc.setFragmentSamplerState(sampler, index: 0)
+        enc.setFragmentSamplerState(repeatSampler ?? sampler, index: 1)
+        let nowT = CACurrentMediaTime()
         let viewport = SIMD2<Float>(Float(px.width), Float(px.height))
         let origin = SIMD2<Float>(Float(px.minX), Float(px.minY))
         let pixelScale = Float(scale)
@@ -249,10 +265,19 @@ final class Renderer: NSObject, MTKViewDelegate {
                 mixAmount = r.mix
                 tex2 = t2
             }
+            // Texto en movimiento: ventana, desplazamiento y opacidad de cada contenido.
+            let an0 = r.cur.map { textAnim($0, nowT) } ?? TextAnim()
+            let an1 = (mixAmount > 0 ? r.next.map { textAnim($0, nowT) } : nil) ?? TextAnim()
+            if Renderer.log, nowT - lastAnimLog > 1, r.cur?.textLayout != nil {
+                lastAnimLog = nowT
+                logEvent(String(format: "texto: ventana=(%.3f, %.3f) desplazamiento=(%.3f, %.3f) alfa=%.2f", an0.view.x, an0.view.y, an0.scroll.x, an0.scroll.y, an0.alpha))
+            }
             var u = FragUniform(viewport: viewport, origin: origin, opacity: s.opacity, maskCount: UInt32(maskCount),
                                 shape: s.shape.shaderID, shapeFeather: s.shapeFeather,
                                 uvM0: cm.0, uvM1: cm.1, shM0: sm.0, shM1: sm.1,
-                                uv2M0: cm2.0, uv2M1: cm2.1, mixAmount: mixAmount, pad: 0)
+                                uv2M0: cm2.0, uv2M1: cm2.1, mixAmount: mixAmount, pad: 0,
+                                view0: an0.view, scroll0: an0.scroll, view1: an1.view, scroll1: an1.scroll,
+                                alpha0: an0.alpha, alpha1: an1.alpha)
 
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.setFragmentTexture(tex, index: 0)
@@ -278,6 +303,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     private static let log = ProcessInfo.processInfo.environment["WARPCAOS_LOG"] != nil
     private let t0 = CACurrentMediaTime()
+    private var lastAnimLog: Double = 0
     private func logEvent(_ s: @autoclosure () -> String) {
         if Renderer.log { print(String(format: "[%7.2f] ", CACurrentMediaTime() - t0) + s()); fflush(stdout) }
     }
@@ -351,7 +377,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         r.lastTick = now
 
         let items = s.items
-        if r.itemsKey != items { resetPlaylist(r, s, items) }
+        if r.itemsKey != items {
+            if !applyTextEdits(r, s, items) { resetPlaylist(r, s, items) }
+        }
         guard let cur = r.cur else { return }
 
         syncSlot(cur, s)
@@ -417,7 +445,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             switch upcoming {
             case .file(let u): lead = MediaKind.of(u) == .video ? 2.0 : 0.5
             case .url, .page: lead = 8.0
-            case .pattern: lead = 0.5
+            case .pattern, .text: lead = 0.5
             }
             if left <= fade + lead {
                 let slot = MediaSlot(source: upcoming)
@@ -481,6 +509,7 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     /// Actualiza un contenido cada frame: textura del video, errores y detección de códecs no soportados.
     private func syncSlot(_ slot: MediaSlot, _ s: SurfaceModel) {
+        if case .text(let spec) = slot.source { updateTypewriter(slot, spec, s) }
         guard let video = slot.video, slot.failure == nil else { return }
 
         if let msg = video.errorMessage {
@@ -512,6 +541,85 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
     }
 
+    // MARK: Texto
+
+    private struct TextAnim {
+        var view = SIMD2<Float>(1, 1)
+        var scroll = SIMD2<Float>(0, 0)
+        var alpha: Float = 1
+    }
+
+    /// Dibuja el texto en la textura del contenido. `visible` = letras visibles (máquina de escribir), nil = todo.
+    private func renderText(_ slot: MediaSlot, _ spec: TextSpec, visible: Int?) {
+        guard let out = TextRenderer.render(spec, visible: visible, device: device, queue: queue) else {
+            slot.failure = "No se pudo dibujar el texto"
+            return
+        }
+        slot.texture = out.texture
+        slot.textLayout = (out.width, out.height, out.boxW, out.boxH)
+        slot.aspect = Float(out.boxW) / Float(out.boxH)
+        slot.isVideo = false
+        slot.sizeReported = true
+        slot.typeVisible = visible ?? -1
+        slot.lastTextRender = CACurrentMediaTime()
+    }
+
+    /// Máquina de escribir: vuelve a dibujar la textura cuando aparece una letra nueva (a lo sumo 20 veces por segundo).
+    private func updateTypewriter(_ slot: MediaSlot, _ spec: TextSpec, _ s: SurfaceModel) {
+        guard spec.mode == .typewriter, slot.sizeReported else { return }
+        let now = CACurrentMediaTime()
+        let t = slot.startedAt > 0 ? max(0, now - slot.startedAt) : 0
+        let speed = Double(max(spec.speed, 0.5))
+        let total = spec.length
+        let cycle = Double(total) / speed + 1.5          // al terminar se queda 1,5 s y vuelve a empezar
+        let visible = min(total, Int((t.truncatingRemainder(dividingBy: cycle)) * speed))
+        if visible != slot.typeVisible, now - slot.lastTextRender >= 0.05 {
+            logEvent("máquina de escribir: \(visible) de \(total) letras")
+            renderText(slot, spec, visible: visible)
+        }
+    }
+
+    /// Ventana, desplazamiento y opacidad de un contenido de texto en este instante.
+    private func textAnim(_ slot: MediaSlot, _ now: Double) -> TextAnim {
+        guard case .text(let spec) = slot.source, let lay = slot.textLayout else { return TextAnim() }
+        let t = slot.startedAt > 0 ? max(0, now - slot.startedAt) : 0
+        let speed = Double(spec.speed)
+        var a = TextAnim()
+        switch spec.mode {
+        case .scrollLeft, .scrollRight:
+            a.view = SIMD2(Float(lay.boxW) / Float(lay.width), 1)
+            let off = Float((t * speed * Double(a.view.x)).truncatingRemainder(dividingBy: 1))
+            a.scroll = SIMD2(spec.mode == .scrollLeft ? off : -off, 0)
+        case .scrollUp, .scrollDown:
+            a.view = SIMD2(1, Float(lay.boxH) / Float(lay.height))
+            let off = Float((t * speed * Double(a.view.y)).truncatingRemainder(dividingBy: 1))
+            a.scroll = SIMD2(0, spec.mode == .scrollUp ? off : -off)
+        case .blink:
+            a.alpha = (t * speed).truncatingRemainder(dividingBy: 1) < 0.5 ? 1 : 0
+        case .pulse:
+            a.alpha = Float(0.5 + 0.5 * cos(2 * Double.pi * speed * t))
+        case .still, .typewriter:
+            break
+        }
+        return a
+    }
+
+    /// Si solo cambió el contenido de textos (misma cantidad de elementos), se actualizan en el lugar:
+    /// la lista no se reinicia ni se corta la animación mientras se edita.
+    private func applyTextEdits(_ r: Resources, _ s: SurfaceModel, _ items: [Source]) -> Bool {
+        guard items.count == r.itemsKey.count, r.cur != nil else { return false }
+        for i in items.indices where items[i] != r.itemsKey[i] {
+            guard case .text = items[i], case .text = r.itemsKey[i] else { return false }
+        }
+        r.itemsKey = items
+        for slot in [r.cur, r.next].compactMap({ $0 }) where slot.index < items.count && slot.source != items[slot.index] {
+            slot.source = items[slot.index]
+            loadSlot(slot, s)
+            if slot === r.cur { state.contentLoaded(id: s.id, aspect: slot.aspect, isVideo: false) }
+        }
+        return true
+    }
+
     // MARK: Carga de un contenido
 
     private func loadSlot(_ slot: MediaSlot, _ s: SurfaceModel) {
@@ -526,6 +634,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         let announce = !slot.preload   // los carteles «Cargando…» son solo del contenido que se está mostrando
 
         switch slot.source {
+        case .text(let spec):
+            renderText(slot, spec, visible: spec.mode == .typewriter ? 0 : nil)
+
         case .pattern(let p):
             slot.texture = Generators.texture(device: device, pattern: p)
             slot.aspect = 1

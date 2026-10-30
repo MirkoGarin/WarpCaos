@@ -8,11 +8,14 @@ enum Source: Equatable {
     case url(URL)
     /// Link de una página de video (YouTube, Vimeo…): se resuelve a un stream con yt-dlp al cargarlo.
     case page(URL)
+    /// Texto escrito en la app: se dibuja en una textura y puede moverse (desplazamiento, parpadeo, máquina de escribir…).
+    case text(TextSpec)
 
     var displayName: String {
         switch self {
         case .pattern(let p): return "Patrón: \(p.rawValue)"
         case .file(let url): return url.lastPathComponent
+        case .text(let spec): return "Texto: «\(spec.summary)»"
         case .page(let url): return "Página: \(url.host ?? "")"
         case .url(let url):
             let name = url.lastPathComponent

@@ -118,6 +118,17 @@ final class AppState: ObservableObject {
             if demo == "quad" { s.cols = 2; s.rows = 2 }
             if demo == "mesh" || demo == "linear" { s.cols = 5; s.rows = 5 }
             if demo == "linear" { s.smooth = false }
+            if let txt = env["WARPCAOS_TEXT"] {
+                var spec = TextSpec()
+                spec.text = txt.replacingOccurrences(of: "\\n", with: "\n")
+                let modes: [String: TextMode] = ["still": .still, "left": .scrollLeft, "right": .scrollRight, "up": .scrollUp,
+                                                  "down": .scrollDown, "blink": .blink, "pulse": .pulse, "type": .typewriter]
+                if let m = env["WARPCAOS_TEXT_MODE"].flatMap({ modes[$0] }) { spec.mode = m; spec.speed = m.defaultSpeed }
+                if let v = env["WARPCAOS_TEXT_SPEED"], let f = Float(v) { spec.speed = f }
+                if let v = env["WARPCAOS_TEXT_ASPECT"], let f = Float(v) { spec.aspect = f }
+                if env["WARPCAOS_TEXT_BG"] != nil { spec.background = RGBA(r: 0.1, g: 0.1, b: 0.5, a: 1) }
+                s.setItems([.text(spec)])
+            }
             if let list = env["WARPCAOS_PLAYLIST"] {
                 let parts = list.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
                 let sources: [Source] = parts.compactMap { p in
@@ -432,6 +443,24 @@ final class AppState: ObservableObject {
     }
 
     func addItemPatterns(_ p: Pattern) { addItems([.pattern(p)]) }
+
+    // MARK: Texto
+
+    /// Reemplaza el contenido de la superficie por un texto nuevo.
+    func useText() { setSource(.text(TextSpec())) }
+
+    func addItemText() { addItems([.text(TextSpec())]) }
+
+    /// Edita el texto del elemento `index` de la lista de la superficie activa (un solo paso de undo por ráfaga de cambios).
+    func updateText(at index: Int, _ change: (inout TextSpec) -> Void) {
+        guard let i = activeIndex else { return }
+        var list = surfaces[i].items
+        guard list.indices.contains(index), case .text(var spec) = list[index] else { return }
+        registerUndo(coalesce: "text-\(index)")
+        change(&spec)
+        list[index] = .text(spec)
+        surfaces[i].setItems(list)
+    }
 
     func addItemFilesPanel() {
         let panel = NSOpenPanel()
