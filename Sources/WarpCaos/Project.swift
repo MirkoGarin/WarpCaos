@@ -9,12 +9,16 @@ extension CodingUserInfoKey {
 /// Las rutas de media se guardan absolutas y relativas a la carpeta del proyecto,
 /// para poder mover proyecto + media juntos a otra máquina.
 extension Source: Codable {
-    private enum CodingKeys: String, CodingKey { case pattern, path, relative, url, page, text }
+    private enum CodingKeys: String, CodingKey { case pattern, path, relative, url, page, text, color }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         if let p = try c.decodeIfPresent(Pattern.self, forKey: .pattern) {
             self = .pattern(p)
+            return
+        }
+        if let rgba = try c.decodeIfPresent(RGBA.self, forKey: .color) {
+            self = .color(rgba)
             return
         }
         if let spec = try c.decodeIfPresent(TextSpec.self, forKey: .text) {
@@ -47,6 +51,8 @@ extension Source: Codable {
             try c.encode(p, forKey: .pattern)
         case .text(let spec):
             try c.encode(spec, forKey: .text)
+        case .color(let rgba):
+            try c.encode(rgba, forKey: .color)
         case .page(let url):
             try c.encode(url, forKey: .page)
         case .url(let url):

@@ -19,6 +19,12 @@ final class AppState: ObservableObject {
     /// Máscara en edición (de la superficie activa). Con una máscara elegida, el canvas edita sus vértices.
     @Published var selectedMaskID: UUID?
     @Published var showOverlay = true
+    /// Cuadrícula de guía del editor (no se ve en la salida). Celdas cuadradas: `gridDivisions` columnas a lo ancho del lienzo.
+    @Published var showGrid = UserDefaults.standard.bool(forKey: "grid.show") { didSet { UserDefaults.standard.set(showGrid, forKey: "grid.show") } }
+    @Published var gridDivisions = max(2, UserDefaults.standard.integer(forKey: "grid.div") == 0 ? 16 : UserDefaults.standard.integer(forKey: "grid.div")) {
+        didSet { UserDefaults.standard.set(gridDivisions, forKey: "grid.div") }
+    }
+    @Published var snapToGrid = UserDefaults.standard.bool(forKey: "grid.snap") { didSet { UserDefaults.standard.set(snapToGrid, forKey: "grid.snap") } }
     @Published var status: String?
     /// Progreso de las listas de reproducción por superficie (lo publica el renderer ~1 vez por segundo).
     @Published private(set) var playback: [UUID: PlaybackInfo] = [:]
@@ -449,6 +455,27 @@ final class AppState: ObservableObject {
     /// Reemplaza el contenido de la superficie por un texto nuevo.
     func useText() { setSource(.text(TextSpec())) }
 
+    func useColor(_ c: RGBA = .white) { setSource(.color(c)) }
+
+    /// Cambia el color de una superficie de color sólido (un solo paso de undo por ráfaga de cambios).
+    func setSolidColor(_ c: RGBA) {
+        guard let i = activeIndex, case .color = surfaces[i].source else { return }
+        registerUndo(coalesce: "solidcolor")
+        surfaces[i].setItems([.color(c)])
+    }
+
+    func setReaction(_ change: (inout Reaction) -> Void) {
+        guard let i = activeIndex else { return }
+        registerUndo(coalesce: "reaction")
+        change(&surfaces[i].reaction)
+    }
+
+    /// Dispara a mano el golpe de una banda, para probar la reacción sin música.
+    func testReaction(_ src: ReactSource) {
+        guard src != .level else { return }
+        AudioReact.shared.onset(src)
+    }
+
     func addItemText() { addItems([.text(TextSpec())]) }
 
     /// Edita el texto del elemento `index` de la lista de la superficie activa (un solo paso de undo por ráfaga de cambios).
@@ -847,13 +874,22 @@ final class AppState: ObservableObject {
         case .none: break
         case .points(let start, let orig):
             beginEditIfNeeded()
-            let delta = n - start
+            var delta = n - start
+            // Imán: el nodo agarrado (el más cercano al punto de partida) cae sobre la cuadrícula; los demás lo acompañan.
+            if let ref = orig.values.min(by: { simd_length($0 - start) < simd_length($1 - start) }) {
+                delta = snapped(ref + delta) - ref
+            }
             var pts = currentPoints() ?? []
             for (i, o) in orig where i < pts.count { pts[i] = clamp(o + delta) }
             writePoints(pts)
         case .whole(let start, let orig):
             beginEditIfNeeded()
-            let delta = n - start
+            var delta = n - start
+            if snapActive, let lo = orig.min(by: { $0.x + $0.y < $1.x + $1.y }) {
+                // Imán: la esquina superior izquierda del contenido cae sobre la cuadrícula.
+                let corner: SIMD2<Float> = [orig.map(\.x).min() ?? lo.x, orig.map(\.y).min() ?? lo.y]
+                delta = snapped(corner + delta) - corner
+            }
             writePoints(orig.map { clamp($0 + delta) })
         case .marquee(let start, let base):
             marquee = (start, n)
@@ -863,6 +899,20 @@ final class AppState: ObservableObject {
             where c.x >= lo.x && c.x <= hi.x && c.y >= lo.y && c.y <= hi.y { sel.insert(i) }
             selection = sel
         }
+    }
+
+    /// Tamaño de una celda de la cuadrícula en coordenadas normalizadas del lienzo (cuadrada en píxeles).
+    var gridCell: SIMD2<Float> {
+        let n = Float(max(gridDivisions, 1))
+        return [1 / n, canvasAspect / n]
+    }
+
+    private var snapActive: Bool { showGrid && snapToGrid }
+
+    private func snapped(_ p: SIMD2<Float>) -> SIMD2<Float> {
+        guard snapActive else { return p }
+        let c = gridCell
+        return [(p.x / c.x).rounded() * c.x, (p.y / c.y).rounded() * c.y]
     }
 
     /// Un solo paso de undo por arrastre, registrado al primer movimiento real.
@@ -906,6 +956,7 @@ final class AppState: ObservableObject {
             case " ": if let a = active, a.isVideo { setPlaying(!a.playing) }
             case "r": resetMesh()
             case "h": showOverlay.toggle()
+            case "g": showGrid.toggle()
             default: return false
             }
         }

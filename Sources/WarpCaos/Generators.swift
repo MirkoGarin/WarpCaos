@@ -11,6 +11,17 @@ enum Pattern: String, CaseIterable, Identifiable, Codable {
 
 /// Generadores de patrones de calibración (texturas CPU).
 enum Generators {
+    /// Textura de un solo color (4×4), con alfa recta.
+    static func solidTexture(device: MTLDevice, color c: RGBA) -> MTLTexture? {
+        let px: [UInt8] = [UInt8(max(0, min(1, c.r)) * 255), UInt8(max(0, min(1, c.g)) * 255),
+                           UInt8(max(0, min(1, c.b)) * 255), UInt8(max(0, min(1, c.a)) * 255)]
+        let pixels = (0..<16).flatMap { _ in px }
+        let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: 4, height: 4, mipmapped: false)
+        guard let tex = device.makeTexture(descriptor: desc) else { return nil }
+        tex.replace(region: MTLRegionMake2D(0, 0, 4, 4), mipmapLevel: 0, withBytes: pixels, bytesPerRow: 16)
+        return tex
+    }
+
     typealias RGB = (UInt8, UInt8, UInt8)
 
     static func texture(device: MTLDevice, pattern: Pattern, size: Int = 1024) -> MTLTexture? {

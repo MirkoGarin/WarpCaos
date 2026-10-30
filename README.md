@@ -21,6 +21,9 @@ Built with Swift, SwiftUI and Metal. It compiles with the Xcode Command Line Too
 - **Playlists** — a surface can hold several contents (videos, images, patterns, URLs) that play one after another with a **crossfade** (0–3 s, or a straight cut). Choose how long each content lasts: **by repetitions** (each video repeats *N* times; images and patterns last a set number of seconds) or **by time** (every content lasts *X* seconds — short videos repeat to fill it, long ones are cut). The list shows which item is playing and the time left. The order can be **shuffled** (no immediate repeats). With a single content it simply loops forever. Select several files in *Open…* or drop them on the window to build a list; each item fits its container with the surface's *Stretch/Cover* setting.
 - **Open URL** — stream a video (`.mp4`, `.mov`, HLS `.m3u8`) or load an image from a direct link, without downloading it first. Links to **Vimeo** pages are resolved to a direct stream with [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (`brew install yt-dlp`) — still streaming, no file is saved. **YouTube** blocks external players, so WarpCaos explains how to download the video instead.
 - **Content** — images and video (looping, mute, rotation metadata respected) plus built-in calibration patterns: checkerboard, grid, UV, color bars, white.
+- **Solid color** — a flat-color content (with opacity, so it can be fully transparent). Combine it with *Music → Appear* to make a "light" that only shows when the sound hits.
+- **Music reactions (OSC)** — WarpCaos listens for [OSC](https://opensoundcontrol.stanford.edu/) messages over UDP (toolbar button **OSC**, default port 9000), e.g. from PulseCaos (a companion audio-analysis app) or TouchOSC. Global messages: `/flash [level] [r g b]`, `/flash/color`, `/flash/decay`, `/strobe hz`, `/brightness v`, `/blackout 0|1`, `/freeze 0|1`, `/reset`. Sound messages: `/audio bass mid treble level` and `/onset/bass|mid|treble` (or `/onset`). Each surface has its own **Music** section: choose the sound (bass, mid, treble, volume, any hit) and the effect — **Flash** (own color, strength, duration), **Appear** (hidden until the sound hits) or **Brightness** (follows the sound).
+- **Guide grid** — editor-only square grid (4–48 columns, toggle with **G**) with an optional **snap**: nodes and surfaces jump to the grid lines while dragging. The center cross is always marked. It is never projected.
 - **Multiple surfaces** — layers with order, opacity and visibility; each surface has its own content, grid and masks.
 - **Projector output** — borderless fullscreen on the chosen screen, **Blackout** and **Freeze**, `Esc` to close. The canvas takes the output screen's aspect ratio, and the display is kept awake while projecting.
 - **Editing workflow** — multi-select (click, Shift+click, marquee), arrow-key nudging, undo/redo (100 steps), drag-and-drop media.
@@ -56,7 +59,7 @@ Built with Swift, SwiftUI and Metal. It compiles with the Xcode Command Line Too
 | Multi-select | Shift+click, or drag on empty space |
 | Deselect | Esc |
 | Play / pause video | Space |
-| Toggle overlay / Reset mesh | H / R |
+| Toggle overlay / Reset mesh / Guide grid | H / R / G |
 
 **Masks:** use **+** in the *Masks* section · double-click an edge to add a vertex · `Delete` removes the selected vertices.
 
@@ -106,7 +109,8 @@ Environment variables used for testing without the UI:
 | `WARPCAOS_YTDLP=<path>` | Force a specific `yt-dlp` binary |
 | `WARPCAOS_PLAYLIST=<a,b,c>` | Comma-separated files/URLs for the first surface's playlist (with `WARPCAOS_FADE`, `WARPCAOS_LOOPS`, `WARPCAOS_STILL`, `WARPCAOS_SHUFFLE`, `WARPCAOS_MODE=time`, `WARPCAOS_SECONDS`; disables autosave) |
 | `WARPCAOS_TEXT=<text>` | Initial text for the first surface (`\n` = new line; with `WARPCAOS_TEXT_MODE=still\|left\|right\|up\|down\|blink\|pulse\|type`, `WARPCAOS_TEXT_SPEED`, `WARPCAOS_TEXT_ASPECT`; disables autosave) |
-| `WARPCAOS_LOG=1` | Print playlist and text-animation events to stdout |
+| `WARPCAOS_OSC=<port>` | Start the OSC receiver on that port |
+| `WARPCAOS_LOG=1` | Print playlist, text-animation and OSC/reaction events to stdout |
 | `WARPCAOS_PROJECT=<path>` | Open a project at launch |
 | `WARPCAOS_SAVE_TO=<path>` | Save the project after 3 s |
 | `WARPCAOS_OUTPUT=test\|screen` | Open the output window at launch |
@@ -115,7 +119,7 @@ Recovery copies are written to `~/Library/Application Support/WarpCaos/autosave.
 
 ### Status
 
-Version 1.6. Pre-built installers (`.dmg`) are available on the [Releases](https://github.com/MirkoGarin/WarpCaos/releases) page. Developed and tested on an Intel Mac with macOS 15; the Apple Silicon slice is built but has not been run on that hardware. Fullscreen output on external projectors depends on your display setup — use a direct wired connection (HDMI/DisplayPort) rather than AirPlay for accurate, low-latency mapping.
+Version 1.7. Pre-built installers (`.dmg`) are available on the [Releases](https://github.com/MirkoGarin/WarpCaos/releases) page. Developed and tested on an Intel Mac with macOS 15; the Apple Silicon slice is built but has not been run on that hardware. Fullscreen output on external projectors depends on your display setup — use a direct wired connection (HDMI/DisplayPort) rather than AirPlay for accurate, low-latency mapping.
 
 ### Credits
 
@@ -146,6 +150,9 @@ Hecha con Swift, SwiftUI y Metal. Se compila con las Command Line Tools de Xcode
 - **Listas de reproducción** — una superficie puede tener varios contenidos (videos, imágenes, patrones, URLs) que se suceden con **fundido** (de 0 a 3 s, o corte directo). Elegís cuánto dura cada contenido: **por repeticiones** (cada video se repite *N* veces; las imágenes y patrones duran una cantidad de segundos) o **por tiempo** (cada contenido dura *X* segundos: los videos cortos se repiten para completarlo y los largos se cortan). La lista marca cuál se está reproduciendo y cuánto le queda. El orden puede ser **aleatorio** (sin repetir el mismo seguido). Con un solo contenido se repite sin fin. Elegí varios archivos en *Abrir…* o soltalos en la ventana para armar la lista; cada uno se acomoda en su contenedor con el ajuste *Estirar/Cubrir* de la superficie.
 - **Abrir URL** — reproducí por streaming un video (`.mp4`, `.mov`, HLS `.m3u8`) o cargá una imagen desde un link directo, sin descargarlo antes. Los links de páginas de **Vimeo** se resuelven a un stream directo con [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (`brew install yt-dlp`): sigue siendo streaming y no se guarda ningún archivo. **YouTube** bloquea a los reproductores externos, así que WarpCaos explica cómo descargar el video.
 - **Contenido** — imágenes y video (con loop, silencio y rotación de metadatos respetada), más patrones de calibración: tablero, grilla, UV, barras de color y blanco.
+- **Color sólido** — un contenido de color liso (con opacidad, así que puede ser del todo transparente). Combinalo con *Música → Aparecer* para hacer una «luz» que solo se ve cuando pega el sonido.
+- **Reacción a la música (OSC)** — WarpCaos escucha mensajes [OSC](https://opensoundcontrol.stanford.edu/) por UDP (botón **OSC** de la barra, puerto 9000 por defecto), por ejemplo de PulseCaos (una app de análisis de audio) o TouchOSC. Mensajes globales: `/flash [nivel] [r g b]`, `/flash/color`, `/flash/decay`, `/strobe hz`, `/brightness v`, `/blackout 0|1`, `/freeze 0|1`, `/reset`. Mensajes de sonido: `/audio graves medios agudos volumen` y `/onset/bass|mid|treble` (o `/onset`). Cada superficie tiene su sección **Música**: elegís el sonido (graves, medios, agudos, volumen, cualquier golpe) y el efecto: **Destello** (color, fuerza y duración propios), **Aparecer** (oculta hasta que pega el sonido) o **Brillo** (sigue al sonido).
+- **Cuadrícula de guía** — cuadrícula cuadrada solo del editor (de 4 a 48 columnas, se prende con **G**) con **imán** opcional: los nodos y las superficies se enganchan a las líneas al arrastrar. El centro siempre está marcado. Nunca se proyecta.
 - **Varias superficies** — capas con orden, opacidad y visibilidad; cada superficie tiene su propio contenido, grilla y máscaras.
 - **Salida a proyector** — pantalla completa sin bordes en la pantalla elegida, **Negro** y **Congelar**, y `Esc` para cerrar. El lienzo toma la proporción de la pantalla de salida y se evita que la pantalla se apague mientras se proyecta.
 - **Flujo de edición** — selección múltiple (clic, Shift+clic, rectángulo), movimiento con flechas, deshacer/rehacer (100 pasos), arrastrar y soltar archivos.
@@ -181,7 +188,7 @@ Hecha con Swift, SwiftUI y Metal. Se compila con las Command Line Tools de Xcode
 | Selección múltiple | Shift+clic, o arrastrar en vacío |
 | Deseleccionar | Esc |
 | Play / pausa del video | Espacio |
-| Overlay / Reset de la malla | H / R |
+| Overlay / Reset de la malla / Cuadrícula | H / R / G |
 
 **Máscaras:** «+» en la sección *Máscaras* · doble clic en una arista agrega un vértice · `Delete` borra los vértices seleccionados.
 
@@ -231,7 +238,8 @@ Variables de entorno para probar sin usar la interfaz:
 | `WARPCAOS_YTDLP=<ruta>` | Fuerza un binario concreto de `yt-dlp` |
 | `WARPCAOS_PLAYLIST=<a,b,c>` | Archivos/URLs separados por coma para la lista de la primera superficie (con `WARPCAOS_FADE`, `WARPCAOS_LOOPS`, `WARPCAOS_STILL`, `WARPCAOS_SHUFFLE`, `WARPCAOS_MODE=time`, `WARPCAOS_SECONDS`; desactiva el autosave) |
 | `WARPCAOS_TEXT=<texto>` | Texto inicial de la primera superficie (`\n` = salto de línea; con `WARPCAOS_TEXT_MODE=still\|left\|right\|up\|down\|blink\|pulse\|type`, `WARPCAOS_TEXT_SPEED`, `WARPCAOS_TEXT_ASPECT`; desactiva el autosave) |
-| `WARPCAOS_LOG=1` | Imprime los eventos de la lista y de la animación del texto por stdout |
+| `WARPCAOS_OSC=<puerto>` | Inicia el receptor OSC en ese puerto |
+| `WARPCAOS_LOG=1` | Imprime los eventos de la lista, de la animación del texto y de OSC/reacciones por stdout |
 | `WARPCAOS_PROJECT=<ruta>` | Abre un proyecto al iniciar |
 | `WARPCAOS_SAVE_TO=<ruta>` | Guarda el proyecto a los 3 s |
 | `WARPCAOS_OUTPUT=test\|screen` | Abre la ventana de salida al iniciar |
@@ -240,7 +248,7 @@ Las copias de recuperación se escriben en `~/Library/Application Support/WarpCa
 
 ### Estado
 
-Versión 1.6. Los instaladores ya compilados (`.dmg`) están en la página de [Releases](https://github.com/MirkoGarin/WarpCaos/releases). Desarrollada y probada en una Mac Intel con macOS 15; la versión para Apple Silicon se compila pero no se ejecutó en ese hardware. La salida a pantalla completa en proyectores externos depende de tu configuración: usá una conexión directa por cable (HDMI/DisplayPort) y no AirPlay para un mapeo preciso y de baja latencia.
+Versión 1.7. Los instaladores ya compilados (`.dmg`) están en la página de [Releases](https://github.com/MirkoGarin/WarpCaos/releases). Desarrollada y probada en una Mac Intel con macOS 15; la versión para Apple Silicon se compila pero no se ejecutó en ese hardware. La salida a pantalla completa en proyectores externos depende de tu configuración: usá una conexión directa por cable (HDMI/DisplayPort) y no AirPlay para un mapeo preciso y de baja latencia.
 
 ### Créditos
 

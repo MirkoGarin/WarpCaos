@@ -10,18 +10,64 @@ enum Source: Equatable {
     case page(URL)
     /// Texto escrito en la app: se dibuja en una textura y puede moverse (desplazamiento, parpadeo, máquina de escribir…).
     case text(TextSpec)
+    /// Color liso (sirve de «luz»: se combina con una reacción a la música para que aparezca solo con el sonido).
+    case color(RGBA)
 
     var displayName: String {
         switch self {
         case .pattern(let p): return "Patrón: \(p.rawValue)"
         case .file(let url): return url.lastPathComponent
         case .text(let spec): return "Texto: «\(spec.summary)»"
+        case .color: return "Color sólido"
         case .page(let url): return "Página: \(url.host ?? "")"
         case .url(let url):
             let name = url.lastPathComponent
             return "URL: \(url.host ?? "")" + (name.isEmpty || name == "/" ? "" : "/…/\(name)")
         }
     }
+}
+
+/// Qué parte del sonido manda sobre una superficie.
+enum ReactSource: String, Codable, CaseIterable, Identifiable {
+    case bass, mid, treble, level, beat
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .bass: return "Graves"
+        case .mid: return "Medios"
+        case .treble: return "Agudos"
+        case .level: return "Volumen"
+        case .beat: return "Cualquier golpe"
+        }
+    }
+}
+
+/// Qué hace la superficie con ese sonido.
+enum ReactEffect: String, Codable, CaseIterable, Identifiable {
+    case none, flash, appear, brightness
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .none: return "Ninguno"
+        case .flash: return "Destello"
+        case .appear: return "Aparecer"
+        case .brightness: return "Brillo"
+        }
+    }
+}
+
+/// Reacción de una superficie a la música (llega de PulseCaos por OSC).
+struct Reaction: Codable, Equatable {
+    var effect: ReactEffect = .none
+    var source: ReactSource = .bass
+    /// Intensidad máxima del efecto (0...1).
+    var strength: Float = 1
+    /// Segundos que tarda el destello o la aparición en apagarse.
+    var decay: Float = 0.35
+    /// Color del destello.
+    var color = RGBA.white
+    /// Brillo más bajo (en silencio) del efecto «Brillo».
+    var minimum: Float = 0.25
 }
 
 private var revisionCounter = 0
@@ -196,6 +242,7 @@ struct SurfaceModel: Identifiable, Codable {
     /// Suavizado del borde de la forma (en unidades del cuadrado normalizado, 0...0.5).
     var shapeFeather: Float = 0
     var fit: FitMode = .stretch
+    var reaction = Reaction()
 
     /// Rotación (grados, sentido horario) y volteo del contenido dentro de la superficie.
     var contentRotation: Float = 0
@@ -252,7 +299,7 @@ struct SurfaceModel: Identifiable, Codable {
     // Solo se persiste lo que define el proyecto (no revision, spawnOffset, demoStyle ni isVideo).
     private enum CodingKeys: String, CodingKey {
         case id, name, source, cols, rows, smooth, mesh, visible, opacity, playing, muted
-        case contentAspect, meshEdited, masks, shape, shapeFeather, fit
+        case contentAspect, meshEdited, masks, shape, shapeFeather, fit, reaction
         case contentRotation, contentFlipH, contentFlipV, shapeRotation, shapeFlipH, shapeFlipV
         case extraItems = "playlist", playlistLoops, playlistShuffle, playlistFade, playlistStillSeconds, playlistMode, playlistSeconds
     }
@@ -278,6 +325,7 @@ extension SurfaceModel {
         shape = try c.decodeIfPresent(ShapeKind.self, forKey: .shape) ?? .rectangle
         shapeFeather = try c.decodeIfPresent(Float.self, forKey: .shapeFeather) ?? 0
         fit = try c.decodeIfPresent(FitMode.self, forKey: .fit) ?? .stretch
+        reaction = try c.decodeIfPresent(Reaction.self, forKey: .reaction) ?? Reaction()
         contentRotation = try c.decodeIfPresent(Float.self, forKey: .contentRotation) ?? 0
         contentFlipH = try c.decodeIfPresent(Bool.self, forKey: .contentFlipH) ?? false
         contentFlipV = try c.decodeIfPresent(Bool.self, forKey: .contentFlipV) ?? false

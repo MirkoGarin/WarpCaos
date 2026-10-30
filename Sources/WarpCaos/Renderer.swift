@@ -16,13 +16,17 @@ private struct FragUniform {
     var uv2M0: SIMD2<Float>
     var uv2M1: SIMD2<Float>
     var mixAmount: Float
-    var pad: Float
+    var gain: Float
     var view0: SIMD2<Float>
     var scroll0: SIMD2<Float>
     var view1: SIMD2<Float>
     var scroll1: SIMD2<Float>
     var alpha0: Float
     var alpha1: Float
+    var flashR: Float
+    var flashG: Float
+    var flashB: Float
+    var flashAmt: Float
 }
 
 private struct MaskInfo {
@@ -242,7 +246,37 @@ final class Renderer: NSObject, MTKViewDelegate {
         let viewport = SIMD2<Float>(Float(px.width), Float(px.height))
         let origin = SIMD2<Float>(Float(px.minX), Float(px.minY))
         let pixelScale = Float(scale)
+        // Efectos de control remoto (OSC): brillo general y destellos.
+        let fx = Effects.shared.current(nowT)
+        if Renderer.log, fx.flashAmount > 0.01, nowT - lastFxLog > 0.1 {
+            lastFxLog = nowT
+            logEvent(String(format: "efecto: destello=%.2f brillo=%.2f", fx.flashAmount, fx.gain))
+        }
+        let react = AudioReact.shared
+        let live = react.isLive(nowT)
         for s in surfaces where s.visible {
+            // Reacción a la música de esta superficie, combinada con los efectos globales.
+            var gain = fx.gain, flashAmt = fx.flashAmount, flashCol = fx.flash, opacityMul: Float = 1
+            let rx = s.reaction
+            switch rx.effect {
+            case .none: break
+            case .flash:
+                let e = react.envelope(rx.source, strength: rx.strength, decay: rx.decay, nowT)
+                if e > flashAmt { flashAmt = e; flashCol = [rx.color.r, rx.color.g, rx.color.b] }
+            case .appear:
+                let e = react.envelope(rx.source, strength: rx.strength, decay: rx.decay, nowT)
+                // En el editor se ve atenuada para poder trabajarla cuando no suena nada.
+                opacityMul = editor && !live ? max(e, 0.3) : e
+            case .brightness:
+                if !(editor && !live) {
+                    gain *= rx.minimum + (1 - rx.minimum) * react.value(rx.source, nowT)
+                }
+            }
+            if Renderer.log, rx.effect != .none, nowT - (lastRxLog[s.id] ?? 0) > 0.1 {
+                lastRxLog[s.id] = nowT
+                logEvent(String(format: "reacción «%@» %@/%@: destello=%.2f opacidad×=%.2f brillo=%.2f", s.name, rx.effect.rawValue,
+                                rx.source.rawValue, flashAmt, opacityMul, gain))
+            }
             guard let r = resources[s.id], let tex = r.cur?.texture,
                   let vb = r.vertexBuffer, let ib = r.indexBuffer else { continue }
 
@@ -272,12 +306,13 @@ final class Renderer: NSObject, MTKViewDelegate {
                 lastAnimLog = nowT
                 logEvent(String(format: "texto: ventana=(%.3f, %.3f) desplazamiento=(%.3f, %.3f) alfa=%.2f", an0.view.x, an0.view.y, an0.scroll.x, an0.scroll.y, an0.alpha))
             }
-            var u = FragUniform(viewport: viewport, origin: origin, opacity: s.opacity, maskCount: UInt32(maskCount),
+            var u = FragUniform(viewport: viewport, origin: origin, opacity: s.opacity * opacityMul, maskCount: UInt32(maskCount),
                                 shape: s.shape.shaderID, shapeFeather: s.shapeFeather,
                                 uvM0: cm.0, uvM1: cm.1, shM0: sm.0, shM1: sm.1,
-                                uv2M0: cm2.0, uv2M1: cm2.1, mixAmount: mixAmount, pad: 0,
+                                uv2M0: cm2.0, uv2M1: cm2.1, mixAmount: mixAmount, gain: gain,
                                 view0: an0.view, scroll0: an0.scroll, view1: an1.view, scroll1: an1.scroll,
-                                alpha0: an0.alpha, alpha1: an1.alpha)
+                                alpha0: an0.alpha, alpha1: an1.alpha,
+                                flashR: flashCol.x, flashG: flashCol.y, flashB: flashCol.z, flashAmt: flashAmt)
 
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.setFragmentTexture(tex, index: 0)
@@ -287,6 +322,10 @@ final class Renderer: NSObject, MTKViewDelegate {
             enc.setFragmentBytes(infos, length: infos.count * MemoryLayout<MaskInfo>.stride, index: 2)
             enc.drawIndexedPrimitives(type: .triangle, indexCount: r.indexCount, indexType: .uint32,
                                       indexBuffer: ib, indexBufferOffset: 0)
+        }
+
+        if editor && state.showGrid {
+            drawGrid(enc, pipeline: overlayPipeline, canvas: (canvasViewport, canvasScissor))
         }
 
         if editor && state.showOverlay {
@@ -301,6 +340,8 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     // MARK: Lista de reproducción y contenido
 
+    private var lastFxLog = 0.0
+    private var lastRxLog: [UUID: Double] = [:]
     private static let log = ProcessInfo.processInfo.environment["WARPCAOS_LOG"] != nil
     private let t0 = CACurrentMediaTime()
     private var lastAnimLog: Double = 0
@@ -445,7 +486,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             switch upcoming {
             case .file(let u): lead = MediaKind.of(u) == .video ? 2.0 : 0.5
             case .url, .page: lead = 8.0
-            case .pattern, .text: lead = 0.5
+            case .pattern, .text, .color: lead = 0.5
             }
             if left <= fade + lead {
                 let slot = MediaSlot(source: upcoming)
@@ -637,6 +678,12 @@ final class Renderer: NSObject, MTKViewDelegate {
         case .text(let spec):
             renderText(slot, spec, visible: spec.mode == .typewriter ? 0 : nil)
 
+        case .color(let c):
+            slot.texture = Generators.solidTexture(device: device, color: c)
+            slot.aspect = 1
+            slot.isVideo = false
+            slot.sizeReported = slot.texture != nil
+
         case .pattern(let p):
             slot.texture = Generators.texture(device: device, pattern: p)
             slot.aspect = 1
@@ -728,6 +775,43 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     // MARK: Overlay
+
+    /// Cuadrícula de guía sobre el lienzo, con celdas cuadradas. Las líneas del centro se marcan más.
+    private func drawGrid(_ enc: MTLRenderCommandEncoder, pipeline: MTLRenderPipelineState,
+                          canvas: (MTLViewport, MTLScissorRect)) {
+        enc.setRenderPipelineState(pipeline)
+        enc.setViewport(canvas.0)
+        enc.setScissorRect(canvas.1)
+        let cell = state.gridCell
+        var normal: [Float] = [], center: [Float] = []
+        // Posiciones en coordenadas del lienzo (0...1, y hacia abajo) → NDC.
+        func vline(_ u: Float, _ into: inout [Float]) { into += [2 * u - 1, 1, 2 * u - 1, -1] }
+        func hline(_ v: Float, _ into: inout [Float]) { into += [-1, 1 - 2 * v, 1, 1 - 2 * v] }
+        var i = 0
+        while Float(i) * cell.x <= 1.0001 {
+            let u = Float(i) * cell.x
+            if abs(u - 0.5) > 0.0005 { vline(u, &normal) }
+            i += 1
+        }
+        var j = 0
+        while Float(j) * cell.y <= 1.0001 {
+            let v = Float(j) * cell.y
+            if abs(v - 0.5) > 0.0005 { hline(v, &normal) }
+            j += 1
+        }
+        // El eje central se marca siempre, caiga o no sobre una línea de la cuadrícula.
+        vline(0.5, &center); hline(0.5, &center)
+        func draw(_ data: [Float], _ c: SIMD4<Float>) {
+            guard !data.isEmpty else { return }
+            if data.count * 4 <= 4000 { enc.setVertexBytes(data, length: data.count * 4, index: 0) }
+            else if let b = buffer(data) { enc.setVertexBuffer(b, offset: 0, index: 0) }
+            var c = c
+            enc.setFragmentBytes(&c, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
+            enc.drawPrimitives(type: .line, vertexStart: 0, vertexCount: data.count / 2)
+        }
+        draw(normal, [0.35, 0.8, 1, 0.28])
+        draw(center, [1, 0.8, 0.2, 0.7])
+    }
 
     private func drawOverlay(_ enc: MTLRenderCommandEncoder, surfaces: [SurfaceModel], size: CGSize, rect: CGRect,
                              pipeline: MTLRenderPipelineState,

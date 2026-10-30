@@ -38,13 +38,17 @@ enum Shaders {
         float2 uv2M0;        // matriz del segundo contenido (durante un fundido entre contenidos de la lista)
         float2 uv2M1;
         float mixAmount;     // 0 = solo el contenido 1; 1 = solo el contenido 2
-        float pad;
+        float gain;          // brillo general (control remoto)
         float2 view0;        // porción de la textura que se ve (1,1 = toda); menor que 1 = texto que se desplaza
         float2 scroll0;      // desplazamiento animado dentro de la textura (con muestreo repetido)
         float2 view1;
         float2 scroll1;
         float alpha0;        // modulación de opacidad por contenido (parpadeo, pulso)
         float alpha1;
+        float flashR;        // destello (control remoto): color y cantidad
+        float flashG;
+        float flashB;
+        float flashAmt;
     };
 
     struct MaskInfo {
@@ -177,7 +181,10 @@ enum Shaders {
             }
         }
         float visibility = (hasShow ? show : 1.0) * hide;
-        return float4(c.rgb, c.a * u.opacity * visibility * shapeA);
+        // El destello enciende también las zonas transparentes de la superficie (respetando forma y máscaras).
+        float3 rgb = c.rgb * u.gain + float3(u.flashR, u.flashG, u.flashB) * u.flashAmt;
+        float a = max(c.a, u.flashAmt);
+        return float4(rgb, a * u.opacity * visibility * shapeA);
     }
 
     // Overlay (contorno y manijas): posiciones NDC directas, color uniforme.

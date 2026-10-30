@@ -17,6 +17,7 @@ struct WarpCaosApp: App {
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
+        RemoteSettings.startIfEnabled()
     }
 
     var body: some Scene {
@@ -102,12 +103,14 @@ struct ContentView: View {
                 }
                 .toggleStyle(.button)
                 .help("Mostrar u ocultar las guías de edición: nodos, malla y contornos (H). No se ven en la salida.")
+                GridMenu(state: state)
                 Button { state.resetMesh() } label: {
                     Label("Reset malla", systemImage: "arrow.counterclockwise").labelStyle(.titleAndIcon)
                 }
                 .help("Devolver la malla de la superficie activa a su forma inicial (R)")
 
                 CanvasMenu(state: state)
+                RemoteMenu()
                 OutputMenu(state: state)
                 if state.outputActive {
                     Toggle(isOn: $state.blackout) {
@@ -123,6 +126,29 @@ struct ContentView: View {
                 }
             }
         }
+    }
+}
+
+/// Cuadrícula de guía del editor: mostrarla, elegir el tamaño de las celdas y activar el imán.
+struct GridMenu: View {
+    @ObservedObject var state: AppState
+
+    var body: some View {
+        Menu {
+            Toggle("Mostrar cuadrícula (G)", isOn: $state.showGrid)
+            Toggle("Imán a la cuadrícula", isOn: $state.snapToGrid)
+            Divider()
+            ForEach([4, 8, 10, 16, 20, 32, 48], id: \.self) { n in
+                Button((n == state.gridDivisions ? "✓ " : "") + "\(n) columnas") {
+                    state.gridDivisions = n
+                    state.showGrid = true
+                }
+            }
+        } label: {
+            Label(state.showGrid ? "Cuadrícula \(state.gridDivisions)" : "Cuadrícula", systemImage: "squareshape.split.3x3")
+                .labelStyle(.titleAndIcon)
+        }
+        .help("Cuadrícula de guía para alinear (solo en el editor, no se proyecta). Con el imán, los nodos y las superficies se enganchan a las líneas al arrastrar.")
     }
 }
 
@@ -146,6 +172,53 @@ struct CanvasMenu: View {
             Label("Lienzo \(current)", systemImage: "aspectratio").labelStyle(.titleAndIcon)
         }
         .help("Proporción del lienzo. Al proyectar en una pantalla se ajusta a la de esa pantalla.")
+    }
+}
+
+/// Control remoto por OSC: activar la recepción, elegir el puerto y probar los efectos.
+struct RemoteMenu: View {
+    @ObservedObject private var osc = OSCReceiver.shared
+    @AppStorage("osc.enabled") private var enabled = false
+    @AppStorage("osc.port") private var port = Int(OSCReceiver.defaultPort)
+
+    var body: some View {
+        Menu {
+            Toggle("Recibir OSC (UDP \(port))", isOn: Binding(
+                get: { enabled },
+                set: { enabled = $0; if $0 { osc.start(port: UInt16(port)) } else { osc.stop() } }))
+            Menu("Puerto") {
+                ForEach([9000, 8000, 7000, 57120], id: \.self) { p in
+                    Button((p == port ? "✓ " : "") + "\(p)") {
+                        port = p
+                        if enabled { osc.start(port: UInt16(p)) }
+                    }
+                }
+            }
+            Divider()
+            Button("Probar destello") { Effects.shared.flash(level: 1, color: nil) }
+            Button("Probar estroboscopio (2 s)") {
+                Effects.shared.setStrobe(10)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { Effects.shared.setStrobe(0) }
+            }
+            Divider()
+            if let f = osc.failure { Text(f) }
+            else if enabled { Text(osc.messageCount == 0 ? "Esperando mensajes…" : "Último: \(osc.lastMessage)") }
+        } label: {
+            Label(osc.running ? "OSC activo" : "OSC", systemImage: "dot.radiowaves.left.and.right").labelStyle(.titleAndIcon)
+        }
+        .help("Controlar WarpCaos desde otra app (PulseCaos, TouchOSC…) con mensajes OSC por red: destello, estroboscopio, brillo, negro")
+    }
+}
+
+enum RemoteSettings {
+    static func startIfEnabled() {
+        let env = ProcessInfo.processInfo.environment
+        if let p = env["WARPCAOS_OSC"].flatMap({ UInt16($0) }) {
+            OSCReceiver.shared.start(port: p)
+        } else if UserDefaults.standard.bool(forKey: "osc.enabled") {
+            let p = UserDefaults.standard.integer(forKey: "osc.port")
+            OSCReceiver.shared.start(port: p > 0 ? UInt16(p) : OSCReceiver.defaultPort)
+        }
     }
 }
 
@@ -407,6 +480,7 @@ struct InspectorView: View {
             PanelSection("Malla", icon: "grid", key: "mesh") { MeshSection(state: state, surface: surface) }
             PanelSection("Capa", icon: "circle.lefthalf.filled", key: "layer") { LayerSection(state: state, surface: surface) }
             PanelSection("Máscaras", icon: "circle.dashed", key: "masks") { MasksView(state: state, surface: surface) }
+            PanelSection("Música", icon: "waveform", key: "music", expanded: false) { ReactionSection(state: state, surface: surface) }
         }
     }
 }
@@ -423,6 +497,7 @@ struct ContentSection: View {
                 }
                 Divider()
                 Button("Texto") { state.useText() }
+                Button("Color sólido") { state.useColor() }
                 Divider()
                 Button("Abrir imagen o video…") { state.openPanel() }
                 Button("Abrir URL…") { state.openURLPanel() }
@@ -430,6 +505,17 @@ struct ContentSection: View {
                 Text(surface.source.displayName).lineLimit(1)
             }
             .help("Qué se muestra en la superficie: un patrón de calibración, una imagen, un video o una URL. Reemplaza toda la lista de reproducción.")
+        }
+
+        if case .color(let c) = surface.source, surface.extraItems.isEmpty {
+            FieldRow("Color") {
+                ColorPicker("", selection: Binding(
+                    get: { Color(nsColor: c.nsColor) },
+                    set: { state.setSolidColor(RGBA(NSColor($0))) }), supportsOpacity: true)
+                    .labelsHidden()
+                    .help("Color de la superficie. Con la barra de opacidad del selector lo hacés semitransparente o del todo transparente. Combinalo con «Música → Aparecer» para hacer una luz que se enciende con el sonido.")
+                Spacer()
+            }
         }
 
         PlaylistView(state: state, surface: surface)
@@ -544,6 +630,70 @@ struct LayerSection: View {
             ValueSlider(value: Binding(get: { Double(surface.opacity) }, set: { state.setOpacity(Float($0)) }),
                         range: 0...1, text: "\(Int((surface.opacity * 100).rounded()))%")
                 .help("Transparencia de la superficie: 0 % no se ve, 100 % es opaca")
+        }
+    }
+}
+
+/// Reacción de la superficie a la música (llega de PulseCaos por OSC).
+struct ReactionSection: View {
+    @ObservedObject var state: AppState
+    let surface: SurfaceModel
+
+    var body: some View {
+        let rx = surface.reaction
+        FieldRow("Efecto") {
+            Picker("", selection: Binding(get: { rx.effect }, set: { v in state.setReaction { $0.effect = v } })) {
+                ForEach(ReactEffect.allCases) { Text($0.label).tag($0) }
+            }
+            .labelsHidden()
+            .help("Qué hace esta superficie con la música. Destello: se enciende con cada golpe. Aparecer: está oculta y se muestra con el sonido (ideal con un color sólido o un loop). Brillo: sube y baja con el volumen.")
+        }
+        if rx.effect != .none {
+            FieldRow("Sonido") {
+                Picker("", selection: Binding(get: { rx.source }, set: { v in state.setReaction { $0.source = v } })) {
+                    ForEach(ReactSource.allCases) { Text($0.label).tag($0) }
+                }
+                .labelsHidden()
+                .help("Qué parte de la música manda: graves (bombo, bajo), medios (guitarras, voz), agudos (platillos), el volumen general o cualquier golpe.")
+            }
+            if rx.effect == .brightness {
+                FieldRow("Mínimo") {
+                    ValueSlider(value: Binding(get: { Double(rx.minimum) }, set: { v in state.setReaction { $0.minimum = Float(v) } }),
+                                range: 0...1, text: "\(Int((rx.minimum * 100).rounded()))%")
+                        .help("Brillo en el silencio; con sonido fuerte llega al 100 %")
+                }
+            } else {
+                if rx.effect == .flash {
+                    FieldRow("Color") {
+                        ColorPicker("", selection: Binding(
+                            get: { Color(nsColor: rx.color.nsColor) },
+                            set: { c in state.setReaction { $0.color = RGBA(NSColor(c)) } }), supportsOpacity: false)
+                            .labelsHidden().help("Color del destello")
+                        Spacer()
+                    }
+                }
+                FieldRow("Fuerza") {
+                    ValueSlider(value: Binding(get: { Double(rx.strength) }, set: { v in state.setReaction { $0.strength = Float(v) } }),
+                                range: 0.1...1, text: "\(Int((rx.strength * 100).rounded()))%")
+                        .help("Intensidad máxima del efecto")
+                }
+                if rx.source != .level {
+                    FieldRow("Duración") {
+                        ValueSlider(value: Binding(get: { Double(rx.decay) }, set: { v in state.setReaction { $0.decay = Float(v) } }),
+                                    range: 0.05...2, text: String(format: "%.2f s", rx.decay))
+                            .help("Cuánto tarda en apagarse después de cada golpe")
+                    }
+                }
+            }
+            if rx.source != .level {
+                HStack {
+                    Spacer()
+                    Button("Probar") { state.testReaction(rx.source) }
+                        .help("Dispara un golpe de prueba, sin música")
+                }
+            }
+            Text("El sonido llega de PulseCaos: activá «OSC» en la barra de WarpCaos y «Enviar a WarpCaos» en PulseCaos.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 }
